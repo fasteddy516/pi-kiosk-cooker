@@ -24,7 +24,7 @@ for arg in "$@"; do
   esac
 done
 
-if false; then # this is the start of debugging bypass stuff
+ # if false; then # this is the start of debugging bypass stuff
 
 # update installed packages
 apt update
@@ -89,4 +89,4 @@ xset s noblank # turn off screen blanking
 xset s off     # turn off screen saver
 EOF
 
-fi # this is the end of debugging bypass stuff
+# fi # this is the end of debugging bypass stuff
