@@ -58,7 +58,7 @@ sed -i -e 's/console=tty1/console=tty3/g' -e 's/$/ loglevel=3 quiet logo.nologo 
 grep "^$USER:" /etc/passwd > /dev/null
 if [ $? -ne 0 ]; then
   echo "User '$USER' does not exist and will be created"
-  useradd -p "$(openssl passwd -6 $PASSWORD)" $USER
+  useradd -p "$(openssl passwd -6 $PASSWORD)" $USER --create-home
 else  
   echo "User '$USER' already exists"
 fi
