@@ -88,6 +88,9 @@ xset -dpms     # turn off display power management system
 xset s noblank # turn off screen blanking
 xset s off     # turn off screen saver
 
+# force dual display configuration even if no physical displays are connected
+xrandr --output HDMI-2 --right-of HDMI-1
+
 # placeholder applications, one per HDMI output
 xterm -geometry 285x65+100+100 &
 xterm -geometry 285x65+2020+100 &
