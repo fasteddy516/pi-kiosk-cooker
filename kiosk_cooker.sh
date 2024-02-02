@@ -90,3 +90,8 @@ xset s off     # turn off screen saver
 EOF
 
 # fi # this is the end of debugging bypass stuff
+
+# all done - countdown to reboot
+echo ""
+for i in `seq 30 -1 1` ; do echo -ne "\r*** Rebooting in $i seconds.  (CTRL-C to cancel) ***" ; sleep 1 ; done
+sudo reboot
