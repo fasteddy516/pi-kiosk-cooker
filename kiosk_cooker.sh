@@ -87,6 +87,10 @@ cat << EOF >> /home/$USER/.config/openbox/autostart
 xset -dpms     # turn off display power management system
 xset s noblank # turn off screen blanking
 xset s off     # turn off screen saver
+
+# placeholder applications, one per HDMI output
+xterm -geometry 285x65+100+100 &
+xterm -geometry 285x65+2020+100 &
 EOF
 
 # fi # this is the end of debugging bypass stuff
