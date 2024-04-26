@@ -105,9 +105,9 @@ xrandr --output HDMI-2 --mode 1920x1080 --right-of HDMI-1
 sleep 5s
 
 # run the kiosk application if it exists
-if [ -f "~/application.sh" ]; then
+if [ -f ~/application.sh ]; then
   ~/application.sh &
-elif [ -f "~/application.py" ]; then
+elif [ -f ~/application.py ]; then
   python ~/application.py &
 else
   xterm -geometry 285x65+100+100 &
