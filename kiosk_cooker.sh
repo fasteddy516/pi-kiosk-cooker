@@ -24,8 +24,6 @@ for arg in "$@"; do
   esac
 done
 
- # if false; then # this is the start of debugging bypass stuff
-
 # update installed packages
 apt update
 apt full-upgrade -y
@@ -80,23 +78,46 @@ su $USER -c "touch ~/.hushlogin"
 # start x environment after autologin
 su $USER -c "echo '[[ -z \$DISPLAY && \$XDG_VTNR -eq 1 ]] && startx -- >/dev/null 2>&1' > ~/.bash_profile"
 
+# create openbox autostart script
 su $USER -c "mkdir ~/.config ; mkdir ~/.config/openbox ; touch ~/.config/openbox/autostart"
-
 cat << EOF >> /home/$USER/.config/openbox/autostart
 # screen saver and power/sleep settings
 xset -dpms     # turn off display power management system
 xset s noblank # turn off screen blanking
 xset s off     # turn off screen saver
 
-# force dual display configuration even if no physical displays are connected
-xrandr --output HDMI-2 --right-of HDMI-1
-
-# placeholder applications, one per HDMI output
-xterm -geometry 285x65+100+100 &
-xterm -geometry 285x65+2020+100 &
+# run kiosk startup script in background
+~/startup.sh &
 EOF
 
-# fi # this is the end of debugging bypass stuff
+# create kiosk startup script
+su $USER -c "touch ~/startup.sh"
+cat << EOF >> /home/$USER/startup.sh
+# wait for Openbox to start and settle
+sleep 10s
+
+# force HDMI-1 to the desired resolution and wait for the change to complete
+xrandr --output HDMI-1 --mode 1920x1080
+sleep 5s
+
+# force HDMI-2 to the desired resolution and position and wait for the change to complete
+xrandr --output HDMI-2 --mode 1920x1080 --right-of HDMI-1
+sleep 5s
+
+# run the kiosk application if it exists
+if [ -f "~/application.sh" ]; then
+  ~/application.sh &
+elif [ -f "~/application.py" ]; then
+  python ~/application.py &
+else
+  xterm -geometry 285x65+100+100 &
+  xterm -geometry 285x65+2020+100 &
+fi
+EOF
+su $USER -c "chmod +x ~/startup.sh"
+
+
+
 
 # all done - countdown to reboot
 echo ""
