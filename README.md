@@ -10,4 +10,4 @@ I use this script for hobby/personal projects in non-critical, controlled enviro
 
 ## Installation
 ### The Easy Way
-`curl -sS "https://raw.githubusercontent.com/fasteddy516/rpi_kiosk_cooker/main/kiosk_cooker.sh" | sudo bash -s -- --user=<user> --password=<pass>`
+`curl -sS "https://raw.githubusercontent.com/fasteddy516/pi-kiosk-cooker/main/kiosk_cooker.sh" | sudo bash -s -- --user=<user> --password=<pass>`
