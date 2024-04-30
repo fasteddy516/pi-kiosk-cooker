@@ -116,6 +116,13 @@ fi
 EOF
 su $USER -c "chmod +x ~/startup.sh"
 
+# Check if install.sh exists in the home directory
+if [ -f "$HOME/install.sh" ]; then
+    echo "--| Running install.sh |------------------------------------------------>>"
+    source "$HOME/install.sh"
+    echo ">>-----------------------------------------------| install.sh complete |--"
+fi
+
 # all done - countdown to reboot
 echo ""
 for i in `seq 30 -1 1` ; do echo -ne "\r*** Rebooting in $i seconds.  (CTRL-C to cancel) ***" ; sleep 1 ; done
