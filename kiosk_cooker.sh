@@ -110,14 +110,11 @@ if [ -f ~/application.sh ]; then
 elif [ -f ~/application.py ]; then
   python ~/application.py &
 else
-  xterm -geometry 285x65+100+100 &
-  xterm -geometry 285x65+2020+100 &
+  xterm -geometry 285x65+100+100 -xrm 'XTerm.vt100.allowTitleOps: false' -T "This is HDMI-1" &
+  xterm -geometry 285x65+2020+100 -xrm 'XTerm.vt100.allowTitleOps: false' -T "This is HDMI-2"  &
 fi
 EOF
 su $USER -c "chmod +x ~/startup.sh"
-
-
-
 
 # all done - countdown to reboot
 echo ""
