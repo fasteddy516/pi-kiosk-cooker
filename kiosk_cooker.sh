@@ -96,11 +96,11 @@ xset s noblank # turn off screen blanking
 xset s off     # turn off screen saver
 
 # run kiosk startup script in background
-~/startup.sh &
+~/kiosk/start.sh &
 EOF
 
 # create kiosk startup script
-su $USER -c "touch ~/startup.sh"
+su $USER -c "mkdir ~/kiosk ; touch ~/kiosk/start.sh"
 cat << EOF >> /home/$USER/startup.sh
 # wait for Openbox to start and settle
 sleep 10s
@@ -123,7 +123,7 @@ else
   xterm -geometry 285x65+2020+100 -xrm 'XTerm.vt100.allowTitleOps: false' -T "This is HDMI-2"  &
 fi
 EOF
-su $USER -c "chmod +x ~/startup.sh"
+su $USER -c "chmod +x ~/kiosk/start.sh"
 
 # source install.sh if it exists
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
