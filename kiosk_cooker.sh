@@ -18,6 +18,7 @@ fi
 # determine credentials that will be used to run kiosk application
 app_user=pi
 app_password=password
+reboot=true
 for arg in "$@"; do
   case $arg in
     --user=*)
@@ -26,6 +27,10 @@ for arg in "$@"; do
       ;;
     --password=*)
       app_password="${arg#*=}"
+      shift
+      ;;
+    --no-reboot)
+      reboot=false
       shift
       ;;
     *)
@@ -136,6 +141,8 @@ else
 fi
 
 # all done - countdown to reboot
-echo ""
-for i in `seq 30 -1 1` ; do echo -ne "\r*** Rebooting in $i seconds.  (CTRL-C to cancel) ***" ; sleep 1 ; done
-sudo reboot
+if $reboot; then
+  echo ""
+  for i in `seq 30 -1 1` ; do echo -ne "\r*** Rebooting in $i seconds.  (CTRL-C to cancel) ***" ; sleep 1 ; done
+  sudo reboot
+fi
