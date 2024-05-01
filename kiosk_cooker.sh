@@ -114,10 +114,10 @@ xrandr --output HDMI-2 --mode 1920x1080 --right-of HDMI-1
 sleep 5s
 
 # run the kiosk application if it exists
-if [ -f ~/application.sh ]; then
-  ~/application.sh &
-elif [ -f ~/application.py ]; then
-  python ~/application.py &
+if [ -f ~/application/start.sh ]; then
+  ~/application/start.sh &
+elif [ -f ~/application/start.py ]; then
+  python ~/application/start.py &
 else
   xterm -geometry 285x65+100+100 -xrm 'XTerm.vt100.allowTitleOps: false' -T "This is HDMI-1" &
   xterm -geometry 285x65+2020+100 -xrm 'XTerm.vt100.allowTitleOps: false' -T "This is HDMI-2"  &
