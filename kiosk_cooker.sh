@@ -125,11 +125,14 @@ fi
 EOF
 su $USER -c "chmod +x ~/startup.sh"
 
-# Check if install.sh exists in the home directory
-if [ -f "$HOME/install.sh" ]; then
+# source install.sh if it exists
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
+if [ -f "${script_dir}/install.sh" ]; then
     echo "--| Running install.sh |------------------------------------------------>>"
-    source "$HOME/install.sh"
+    source "${script_dir}/install.sh"
     echo ">>-----------------------------------------------| install.sh complete |--"
+else
+    echo "* ${script_dir}/install.sh not present, skipping."
 fi
 
 # all done - countdown to reboot
