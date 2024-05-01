@@ -16,8 +16,8 @@ else
 fi
 
 # set default reboot state if necessary
-if [ ! -v $reboot ]; then
-  reboot=true
+if [ ! -v reboot ]; then
+  reboot=1
 fi
 
 # set default credentials that will be used to run kiosk application if they aren't explicitly specified
@@ -36,7 +36,7 @@ for arg in "$@"; do
       shift
       ;;
     --no-reboot)
-      reboot=false
+      reboot=0
       shift
       ;;
     *)
@@ -137,7 +137,7 @@ EOF
 su $app_user -c "chmod +x ~/kiosk/start.sh"
 
 # all done - countdown to reboot
-if $reboot; then
+if [ $reboot -eq 1 ]; then
   echo ""
   for i in `seq 30 -1 1` ; do echo -ne "\r*** Rebooting in $i seconds.  (CTRL-C to cancel) ***" ; sleep 1 ; done
   sudo reboot
