@@ -1,8 +1,17 @@
 #!/bin/bash
 
 # ensure the script is being run as root
-if [ "$EUID" -ne 0 ]
-  then echo "This script must be run as root (i.e. with sudo)"
+if [ "$(id -u)" -eq 0 ]; then
+  # check if SUDO_USER is set
+  if [ -n "$SUDO_USER" ]; then
+    echo "* Script is run by sudo, original user is $SUDO_USER"
+    original_user=$SUDO_USER
+  else
+    echo "* Script is run by root, but not through sudo"
+    original_user=$(whoami)
+  fi
+else
+  echo "! This script must be run as root (i.e. with sudo)"
   exit
 fi
 
