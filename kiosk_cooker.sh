@@ -15,10 +15,16 @@ else
   exit
 fi
 
-# determine credentials that will be used to run kiosk application
+# set default reboot state if necessary
+if [ ! -v $reboot ]; then
+  reboot=true
+fi
+
+# set default credentials that will be used to run kiosk application if they aren't explicitly specified
 app_user=pi
-app_password=password
-reboot=true
+app_password=raspberry
+
+# process command-line arguments
 for arg in "$@"; do
   case $arg in
     --user=*)
