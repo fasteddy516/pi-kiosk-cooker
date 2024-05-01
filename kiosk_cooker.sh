@@ -16,16 +16,16 @@ else
 fi
 
 # determine credentials that will be used to run kiosk application
-USER=pi
-PASSWORD=password
+app_user=pi
+app_password=password
 for arg in "$@"; do
   case $arg in
     --user=*)
-      USER="${arg#*=}"
+      app_user="${arg#*=}"
       shift
       ;;
     --password=*)
-      PASSWORD="${arg#*=}"
+      app_password="${arg#*=}"
       shift
       ;;
     *)
@@ -62,16 +62,16 @@ sed -i -e '$a disable_splash=1\nhdmi_force_hotplug=1\n' /boot/firmware/config.tx
 sed -i -e 's/console=tty1/console=tty3/g' -e 's/$/ loglevel=3 quiet logo.nologo plymouth.ignore-serial-consoles vt.global_cursor_default=0 video=HDMI-A-1:1920x1080@60D video=HDMI-A-2:1920x1080@60D/' /boot/firmware/cmdline.txt
 
 # create default application user if necessary
-grep "^$USER:" /etc/passwd > /dev/null
+grep "^$app_user:" /etc/passwd > /dev/null
 if [ $? -ne 0 ]; then
-  echo "User '$USER' does not exist and will be created"
-  useradd -p "$(openssl passwd -6 $PASSWORD)" $USER --create-home
+  echo "User '$app_user' does not exist and will be created"
+  useradd -p "$(openssl passwd -6 $app_password)" $app_user --create-home
 else  
-  echo "User '$USER' already exists"
+  echo "User '$app_user' already exists"
 fi
 
 # modify console autologin to use application user and clean up some login artifacts
-sed -i -e "s|^ExecStart=-.*|ExecStart=-/sbin/agetty --skip-login --nonewline --noissue --autologin $USER --noclear %I \$TERM|" /etc/systemd/system/getty@tty1.service.d/autologin.conf
+sed -i -e "s|^ExecStart=-.*|ExecStart=-/sbin/agetty --skip-login --nonewline --noissue --autologin $app_user --noclear %I \$TERM|" /etc/systemd/system/getty@tty1.service.d/autologin.conf
 systemctl daemon-reload
 
 # hide operating system information display on login
@@ -82,14 +82,14 @@ cp -f /etc/motd /etc/motd.bak
 echo "" > /etc/motd
 
 # disable bash last login display
-su $USER -c "touch ~/.hushlogin"
+su $app_user -c "touch ~/.hushlogin"
 
 # start x environment after autologin
-su $USER -c "echo '[[ -z \$DISPLAY && \$XDG_VTNR -eq 1 ]] && startx -- >/dev/null 2>&1' > ~/.bash_profile"
+su $app_user -c "echo '[[ -z \$DISPLAY && \$XDG_VTNR -eq 1 ]] && startx -- >/dev/null 2>&1' > ~/.bash_profile"
 
 # create openbox autostart script
-su $USER -c "mkdir ~/.config ; mkdir ~/.config/openbox ; touch ~/.config/openbox/autostart"
-cat << EOF >> /home/$USER/.config/openbox/autostart
+su $app_user -c "mkdir ~/.config ; mkdir ~/.config/openbox ; touch ~/.config/openbox/autostart"
+cat << EOF >> /home/$app_user/.config/openbox/autostart
 # screen saver and power/sleep settings
 xset -dpms     # turn off display power management system
 xset s noblank # turn off screen blanking
@@ -100,8 +100,8 @@ xset s off     # turn off screen saver
 EOF
 
 # create kiosk startup script
-su $USER -c "mkdir ~/kiosk ; touch ~/kiosk/start.sh"
-cat << EOF >> /home/$USER/startup.sh
+su $app_user -c "mkdir ~/kiosk ; touch ~/kiosk/start.sh"
+cat << EOF >> /home/$app_user/startup.sh
 # wait for Openbox to start and settle
 sleep 10s
 
@@ -123,7 +123,7 @@ else
   xterm -geometry 285x65+2020+100 -xrm 'XTerm.vt100.allowTitleOps: false' -T "This is HDMI-2"  &
 fi
 EOF
-su $USER -c "chmod +x ~/kiosk/start.sh"
+su $app_user -c "chmod +x ~/kiosk/start.sh"
 
 # source application install script if it exists
 install_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)/install.sh"
