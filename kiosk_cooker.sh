@@ -125,14 +125,14 @@ fi
 EOF
 su $USER -c "chmod +x ~/kiosk/start.sh"
 
-# source install.sh if it exists
-script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
-if [ -f "${script_dir}/install.sh" ]; then
-    echo "--| Running install.sh |------------------------------------------------>>"
-    source "${script_dir}/install.sh"
-    echo ">>-----------------------------------------------| install.sh complete |--"
+# source application install script if it exists
+install_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)/install.sh"
+if [ -f "${install_script}" ]; then
+  echo "--| Running install.sh |------------------------------------------------>>"
+  source "${install_script}"
+  echo ">>-----------------------------------------------| install.sh complete |--"
 else
-    echo "* ${script_dir}/install.sh not present, skipping."
+  echo "* ${install_script} not present, skipping."
 fi
 
 # all done - countdown to reboot
