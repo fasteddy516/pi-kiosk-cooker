@@ -20,9 +20,15 @@ if [ ! -v reboot ]; then
   reboot=1
 fi
 
-# set default credentials that will be used to run kiosk application if they aren't explicitly specified
-app_user=pi
-app_password=raspberry
+# set default application username if it hasn't been specified
+if [ ! -v app_user ]; then
+  app_user=pi
+fi
+
+# set default application password if it hasn't been specified
+if [ ! -v app_password ]; then
+  app_password=raspberry
+fi
 
 # process command-line arguments
 for arg in "$@"; do
