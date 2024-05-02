@@ -112,7 +112,7 @@ EOF
 
 # create kiosk startup script
 su $app_user -c "mkdir ~/kiosk ; touch ~/kiosk/start.sh"
-cat << EOF >> /home/$app_user/startup.sh
+cat << EOF >> /home/$app_user/kiosk.start.sh
 # wait for Openbox to start and settle
 sleep 10s
 
