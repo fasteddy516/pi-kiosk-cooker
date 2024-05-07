@@ -72,11 +72,15 @@ raspi-config nonint do_blanking 1
 sed -i -e '/disable_splash=/d' -e '/hdmi_force_hotplug=/d' -e '${/^$/d;}' /boot/firmware/config.txt
 sed -i -e '$a disable_splash=1\nhdmi_force_hotplug=1\n' /boot/firmware/config.txt
 
+# retrieve 1080P+2CH audio raw EDID file
+wget "https://github.com/fasteddy516/pi-kiosk-cooker/raw/main/edid/1080P-2CH.edid"
+sudo mv ./1080P-2CH.edid /lib/firmware/1080P-2CH.edid
+
 # set cmdline.txt parameters:
 #    hide boot artifacts: console=, loglevel=, quiet, logo, plymouth
 #    hide console artifacts: vt.global_cursor
 #    set default display resolutions: video=
-sed -i -e 's/console=tty1/console=tty3/g' -e 's/$/ loglevel=3 quiet logo.nologo plymouth.ignore-serial-consoles vt.global_cursor_default=0 video=HDMI-A-1:1920x1080@60D video=HDMI-A-2:1920x1080@60D vc4.force_hotplug=0x03/' /boot/firmware/cmdline.txt
+sed -i -e 's/console=tty1/console=tty3/g' -e 's/$/ loglevel=3 quiet logo.nologo plymouth.ignore-serial-consoles vt.global_cursor_default=0 video=HDMI-A-1:1920x1080@60D video=HDMI-A-2:1920x1080@60D drm.edid_firmware=HDMI-A-1:1080P-2CH.edid drm.edid_firmware=HDMI-A-2:1080P-2CH.edid vc4.force_hotplug=0x03/' /boot/firmware/cmdline.txt
 
 # create default application user if necessary
 grep "^$app_user:" /etc/passwd > /dev/null
