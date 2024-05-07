@@ -76,7 +76,7 @@ sed -i -e '$a disable_splash=1\nhdmi_force_hotplug=1\n' /boot/firmware/config.tx
 #    hide boot artifacts: console=, loglevel=, quiet, logo, plymouth
 #    hide console artifacts: vt.global_cursor
 #    set default display resolutions: video=
-sed -i -e 's/console=tty1/console=tty3/g' -e 's/$/ loglevel=3 quiet logo.nologo plymouth.ignore-serial-consoles vt.global_cursor_default=0 video=HDMI-A-1:1920x1080@60D video=HDMI-A-2:1920x1080@60D/' /boot/firmware/cmdline.txt
+sed -i -e 's/console=tty1/console=tty3/g' -e 's/$/ loglevel=3 quiet logo.nologo plymouth.ignore-serial-consoles vt.global_cursor_default=0 video=HDMI-A-1:1920x1080@60D video=HDMI-A-2:1920x1080@60D vc4.force_hotplug=0x03/' /boot/firmware/cmdline.txt
 
 # create default application user if necessary
 grep "^$app_user:" /etc/passwd > /dev/null
