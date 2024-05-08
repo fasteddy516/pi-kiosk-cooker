@@ -27,7 +27,7 @@ sudo rm -rf /var/log/journal/*
 echo "First boot setup completed!"
 
 # Delete this script after execution
-rm -- "$0"
+rm /usr/local/bin/first-boot.sh
 
 # Reboot the system after completing first-boot setup
 sudo reboot
