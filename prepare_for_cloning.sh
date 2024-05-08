@@ -1,8 +1,7 @@
 #!/bin/bash
 
 # Create first-boot script
-touch /usr/local/bin/first-boot.sh
-cat << 'EOF' >> /usr/local/bin/first-boot.sh
+cat << 'EOF' > /usr/local/bin/first-boot.sh
 #!/bin/bash
 
 # Clear the old machine-id
@@ -39,13 +38,8 @@ chmod +x /usr/local/bin/first-boot.sh
 systemctl enable rc-local
 systemctl start rc-local
 
-# Remove existing rc.local (should be empty/unused at this point anyway)
-if [ ! -f /etc/rc.local ]; then
-  rm /etc/rc.local
-fi
-# Create new rc.local script
-touch /etc/rc.local
-cat << 'EOF' >> /etc/rc.local
+# Create/replace rc.local script
+cat << 'EOF' > /etc/rc.local
 #!/bin/bash
 
 # Check if the first-boot script exists before executing
