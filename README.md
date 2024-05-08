@@ -21,7 +21,7 @@ chmod +x kiosk_cooker.sh
 
 ## Preparing a Kiosk Image for Cloning
 ### The simple way
-`curl -sS "https://raw.githubusercontent.com/fasteddy516/pi-kiosk-cooker/main/prepare_for_cloning.sh" | sudo bash
+`curl -sS "https://raw.githubusercontent.com/fasteddy516/pi-kiosk-cooker/main/prepare_for_cloning.sh" | sudo bash`
 
 ### The safer way
 ```
