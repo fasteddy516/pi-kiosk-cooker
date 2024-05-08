@@ -8,6 +8,11 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
+# set default script-deletion value if it hasn't been defined already
+if [ ! -v delete_script ]; then
+  delete_script=1
+fi
+
 # set default shutdown-on-completion value if it hasn't been defined already
 if [ ! -v shutdown_on_complete ]; then
   shutdown_on_complete=1
@@ -15,6 +20,10 @@ fi
 
 # Process command-line arguments
 for arg in "$@"; do
+  if [[ "$arg" == "--no-delete" ]]; then
+    echo "@ Skipping script delete on completion."
+    delete_script=0
+  fi
   if [[ "$arg" == "--no-shutdown" ]]; then
     echo "@ Skipping shutdown on script completion."
     shutdown_on_complete=0
@@ -73,10 +82,12 @@ chmod +x /etc/rc.local
 echo "DONE"
 
 # Delete this script after execution so that it doesn't become part of a cloned image
-if [[ "$0" != "bash" ]]; then
-  echo -n "> Deleting cloning preparation script..."
-  rm -- "$0"
-  echo "DONE"
+if [ $delete_script -eq 1 ]; then
+  if [[ "$0" != "bash" ]]; then
+    echo -n "> Deleting cloning preparation script..."
+    rm -- "$0"
+    echo "DONE"
+  fi
 fi
 
 # all done - countdown to shutdown
