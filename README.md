@@ -9,12 +9,25 @@ This is a script I use for the initial set up of a Raspberry Pi as a single or d
 I use this script for hobby/personal projects in non-critical, controlled environments; there is virtually no thought put into securing/hardening the device or operating system.  Like the associated MIT license says, "THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND", so use it at your own risk! (But I *do* hope you find it useful, as I do!)
 
 ## Installation
-### The simplest way
+### The simple way
 `curl -sS "https://raw.githubusercontent.com/fasteddy516/pi-kiosk-cooker/main/kiosk_cooker.sh" | sudo bash -s -- --user=<user> --password=<pass>`
 
-### The safest way
+### The safer way
 ```
 wget https://github.com/fasteddy516/pi-kiosk-cooker/raw/main/kiosk_cooker.sh
 chmod +x kiosk_cooker.sh
-./kiosk_cooker.sh --user=<user> --password=<pass>`
+./kiosk_cooker.sh --user=<user> --password=<pass>
 ```
+
+## Preparing a Kiosk Image for Cloning
+### The simple way
+`curl -sS "https://raw.githubusercontent.com/fasteddy516/pi-kiosk-cooker/main/prepare_for_cloning.sh" | sudo bash
+
+### The safer way
+```
+wget https://github.com/fasteddy516/pi-kiosk-cooker/raw/main/prepare_for_cloning.sh
+chmod +x prepare_for_cloning.sh
+./prepare_for_cloning.sh
+```
+
+Note that the final step of the `prepare_for_cloning.sh` script is to power down the Pi.  At this point it is ready to have the MicroSD card removed and imaged.
