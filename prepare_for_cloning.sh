@@ -8,6 +8,19 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
+# set default shutdown-on-completion value if it hasn't been defined already
+if [ ! -v shutdown_on_complete ]; then
+  shutdown_on_complete=1
+fi
+
+# Process command-line arguments
+for arg in "$@"; do
+  if [[ "$arg" == "--no-shutdown" ]]; then
+    echo "@ Skipping shutdown on script completion."
+    shutdown_on_complete=0
+  fi
+done
+
 # Create first-boot script
 echo -n "> Creating /usr/local/bin/first-boot.sh script..."
 cat << 'EOF' > /usr/local/bin/first-boot.sh
@@ -66,5 +79,13 @@ if [[ "$0" != "bash" ]]; then
   echo "DONE"
 fi
 
-# Power off the system - it is ready to have the micro sd card removed and imaged
-poweroff
+# all done - countdown to shutdown
+if [ $shutdown_on_complete -eq 1 ]; then
+  echo "* Cloning preparation complete. The system will now shut down."
+  echo ""
+  for i in `seq 30 -1 1` ; do echo -ne "\r*** Shutting down in $i seconds.  (CTRL-C to cancel) ***" ; sleep 1 ; done
+  poweroff
+else
+  echo "* Cloning preparation complete. Shutdown was skipped, so the system will remain running."
+  echo ""
+fi
