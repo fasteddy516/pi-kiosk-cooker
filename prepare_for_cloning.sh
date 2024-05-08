@@ -2,7 +2,7 @@
 
 # Create first-boot script
 touch /usr/local/bin/first-boot.sh
-cat << EOF >> /usr/local/bin/first-boot.sh
+cat << 'EOF' >> /usr/local/bin/first-boot.sh
 #!/bin/bash
 
 # Clear the old machine-id
@@ -45,7 +45,7 @@ if [ ! -f /etc/rc.local ]; then
 fi
 # Create new rc.local script
 touch /etc/rc.local
-cat << EOF >> /etc/rc.local
+cat << 'EOF' >> /etc/rc.local
 #!/bin/bash
 
 # Check if the first-boot script exists before executing
