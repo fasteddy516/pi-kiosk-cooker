@@ -2,6 +2,12 @@
 
 echo "Preparing first-boot setup for cloning Raspberry Pi image..."
 
+# Check if the script is running as root
+if [ "$EUID" -ne 0 ]; then
+  echo "! This script requires root privileges. Please run as root or with sudo."
+  exit 1
+fi
+
 # Create first-boot script
 echo -n "> Creating /usr/local/bin/first-boot.sh script..."
 cat << 'EOF' > /usr/local/bin/first-boot.sh
