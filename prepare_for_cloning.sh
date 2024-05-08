@@ -1,6 +1,9 @@
 #!/bin/bash
 
+echo "Preparing first-boot setup for cloning Raspberry Pi image..."
+
 # Create first-boot script
+echo -n "> Creating /usr/local/bin/first-boot.sh script..."
 cat << 'EOF' > /usr/local/bin/first-boot.sh
 #!/bin/bash
 
@@ -33,8 +36,10 @@ rm /usr/local/bin/first-boot.sh
 sudo reboot
 EOF
 chmod +x /usr/local/bin/first-boot.sh
+echo "DONE"
 
 # Create/replace rc.local script
+echo -n "> Configuring /etc/rc.local script..."
 cat << 'EOF' > /etc/rc.local
 #!/bin/bash
 
@@ -46,9 +51,14 @@ fi
 exit 0
 EOF
 chmod +x /etc/rc.local
+echo "DONE"
 
 # Delete this script after execution so that it doesn't become part of a cloned image
-rm -- "$0"
+if [[ "$0" != "bash" ]]; then
+  echo -n "> Deleting cloning preparation script..."
+  rm -- "$0"
+  echo "DONE"
+fi
 
 # Power off the system - it is ready to have the micro sd card removed and imaged
 poweroff
