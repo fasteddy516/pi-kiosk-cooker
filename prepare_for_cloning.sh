@@ -34,10 +34,6 @@ sudo reboot
 EOF
 chmod +x /usr/local/bin/first-boot.sh
 
-# Ensure rc.local is enabled and running
-systemctl enable rc-local
-systemctl start rc-local
-
 # Create/replace rc.local script
 cat << 'EOF' > /etc/rc.local
 #!/bin/bash
