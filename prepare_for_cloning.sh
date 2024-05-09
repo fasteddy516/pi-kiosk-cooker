@@ -70,8 +70,8 @@ chmod +x /usr/local/bin/first-boot.sh
 echo "DONE"
 
 # Create/replace rc.local script if needed
-if ! grep -q "first-boot.sh" "/etc/rc.local"; then
-  echo -n "> Deleting cloning preparation script..."
+if [[ ! -e "/etc/rc.local" ]] || ! grep -q "first-boot.sh" "/etc/rc.local"; then
+  echo -n "> Configuring rc.local script..."
   cat << 'EOF' > /etc/rc.local
 #!/bin/bash
 
