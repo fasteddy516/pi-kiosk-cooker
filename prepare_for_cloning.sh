@@ -63,7 +63,7 @@ NEW_HOSTNAME="raspberrypi-$LAST_OCTETS"
 echo "$NEW_HOSTNAME" | sudo tee /etc/hostname
 sudo sed -i "s/127.0.1.1.*/127.0.1.1 $NEW_HOSTNAME/" /etc/hosts
 
-# Clear systemd journal logs (optional)
+# Clear systemd journal logs
 sudo rm -rf /var/log/journal/*
 
 # Log completion of the first boot tasks
@@ -76,6 +76,16 @@ rm /usr/local/bin/first-boot.sh
 sudo reboot
 EOF
 chmod +x /usr/local/bin/first-boot.sh
+echo "DONE"
+
+# Deleting SSH host keys
+echo -n "> Deleting SSH host keys..."
+sudo rm -f /etc/ssh/ssh_host_*
+echo "DONE"
+
+# Clear systemd journal logs
+echo -n "> Clearing systemd journal logs..."
+sudo rm -rf /var/log/journal/*
 echo "DONE"
 
 # Delete network connections if requested
