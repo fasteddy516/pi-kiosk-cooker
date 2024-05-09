@@ -66,21 +66,6 @@ EOF
 chmod +x /usr/local/bin/first-boot.sh
 echo "DONE"
 
-# Create/replace rc.local script
-echo -n "> Configuring /etc/rc.local script..."
-cat << 'EOF' > /etc/rc.local
-#!/bin/bash
-
-# Check if the first-boot script exists before executing
-if [ -x /usr/local/bin/first-boot.sh ]; then
-  /usr/local/bin/first-boot.sh
-fi
-
-exit 0
-EOF
-chmod +x /etc/rc.local
-echo "DONE"
-
 # Delete this script after execution so that it doesn't become part of a cloned image
 if [ $delete_script -eq 1 ]; then
   if [[ "$0" != "bash" ]]; then
