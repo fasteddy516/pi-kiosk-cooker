@@ -8,6 +8,9 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
+# Check if rc.local has been configured correctly by the kiosk_cooker.sh script
+
+
 # set default script-deletion value if it hasn't been defined already
 if [ ! -v delete_script ]; then
   delete_script=1
@@ -65,6 +68,30 @@ sudo reboot
 EOF
 chmod +x /usr/local/bin/first-boot.sh
 echo "DONE"
+
+# Create/replace rc.local script if needed
+if ! grep -q "first-boot.sh" "/etc/rc.local"; then
+  echo -n "> Deleting cloning preparation script..."
+  cat << 'EOF' > /etc/rc.local
+#!/bin/bash
+
+# Check if the first-boot script exists before executing
+if [ -x /usr/local/bin/first-boot.sh ]; then
+  /usr/local/bin/first-boot.sh
+fi
+
+# Check if the app-update script exists before executing
+if [ -x /usr/local/bin/app-update.sh ]; then
+  /usr/local/bin/app-update.sh
+fi
+
+exit 0
+EOF
+  chmod +x /etc/rc.local
+  echo "DONE"
+else
+  echo "@ rc.local script already configured for first-boot.sh"
+fi
 
 # Delete this script after execution so that it doesn't become part of a cloned image
 if [ $delete_script -eq 1 ]; then
