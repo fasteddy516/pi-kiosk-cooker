@@ -152,12 +152,20 @@ cat << 'EOF' > /etc/rc.local
 
 # Check if the first-boot script exists before executing
 if [ -x /usr/local/bin/first-boot.sh ]; then
+  echo "* Running first-boot.sh script"
   /usr/local/bin/first-boot.sh
+  echo "* first-boot.sh script completed"
+else
+  echo "@ first-boot.sh script not found or not executable, skipping"
 fi
 
 # Check if the app-update script exists before executing
 if [ -x /usr/local/bin/app-update.sh ]; then
+  echo "* Running app-update.sh script"
   /usr/local/bin/app-update.sh
+  echo "* app-update.sh script completed"
+else
+  echo "@ app-update.sh script not found or not executable, skipping"
 fi
 
 exit 0

@@ -77,7 +77,11 @@ if [[ ! -e "/etc/rc.local" ]] || ! grep -q "first-boot.sh" "/etc/rc.local"; then
 
 # Check if the first-boot script exists before executing
 if [ -x /usr/local/bin/first-boot.sh ]; then
+  echo "* Running first-boot.sh script"
   /usr/local/bin/first-boot.sh
+  echo "* First-boot.sh script completed"
+else
+  echo "@ first-boot.sh script not found or not executable, skipping"
 fi
 
 exit 0
