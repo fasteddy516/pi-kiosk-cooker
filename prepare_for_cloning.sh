@@ -80,11 +80,6 @@ if [ -x /usr/local/bin/first-boot.sh ]; then
   /usr/local/bin/first-boot.sh
 fi
 
-# Check if the app-update script exists before executing
-if [ -x /usr/local/bin/app-update.sh ]; then
-  /usr/local/bin/app-update.sh
-fi
-
 exit 0
 EOF
   chmod +x /etc/rc.local
