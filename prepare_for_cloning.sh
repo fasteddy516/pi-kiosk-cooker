@@ -21,6 +21,11 @@ if [ ! -v shutdown_on_complete ]; then
   shutdown_on_complete=1
 fi
 
+# set default network-deletion value if it hasn't been defined already
+if [ ! -v delete_networks ]; then
+  delete_networks=1
+fi
+
 # Process command-line arguments
 for arg in "$@"; do
   if [[ "$arg" == "--no-delete" ]]; then
@@ -30,6 +35,10 @@ for arg in "$@"; do
   if [[ "$arg" == "--no-shutdown" ]]; then
     echo "@ Skipping shutdown on script completion."
     shutdown_on_complete=0
+  fi
+  if [[ "$arg" == "--preserve-networks" ]]; then
+    echo "@ Skipping deletion of network connections."
+    delete_networks=0
   fi
 done
 
@@ -68,6 +77,13 @@ sudo reboot
 EOF
 chmod +x /usr/local/bin/first-boot.sh
 echo "DONE"
+
+# Delete network connections if requested
+if [ $delete_networks -eq 1 ]; then
+  echo -n "> Deleting network connections..."
+  sudo rm /etc/NetworkManager/system-connections/*.nmconnection
+  echo "DONE"
+fi
 
 # Create/replace rc.local script if needed
 if [[ ! -e "/etc/rc.local" ]] || ! grep -q "first-boot.sh" "/etc/rc.local"; then
