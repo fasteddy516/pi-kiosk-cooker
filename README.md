@@ -1,7 +1,7 @@
 # Raspberry Pi Kiosk Cooker
 ##### A bash script to turn a Raspberry Pi into a barebones X Windows kiosk.  
 
-_Tested on a Raspberry Pi 5 running Raspberry Pi OS Lite (64-bit) "Bookworm" released on 2023-12-11_
+_Tested on Raspberry Pi 4B and 5 hardware running Raspberry Pi OS Lite (64-bit) "Bookworm"_
 
 This is a script I use for the initial set up of a Raspberry Pi as a single or dual-display kiosk-style device.  Typical use cases are status/dashboard displays, automated media players and touch control interfaces (for [Home Assistant](https://www.home-assistant.io/) in my case).  This script _does not_ fully set up the Pi for these cases, but  _does_ take care of the initial set up of a barebones X Windows environment such that running the necessary application(s) should be relatively straight-forward.
 
