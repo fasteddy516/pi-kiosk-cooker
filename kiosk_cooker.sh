@@ -377,8 +377,9 @@ EOF
 # finish setting up systemd services and targets
 systemctl daemon-reload
 systemctl enable kiosk-x.service
-systemctl enable kiosk-x-ready.target
 systemctl enable kiosk-ui-ready.target
+systemctl enable kiosk-ui-init.service
+systemctl enable kiosk-x-ready.target
 if [ $demo -eq 1 ]; then
   systemctl enable xterm-demo.service
 fi
