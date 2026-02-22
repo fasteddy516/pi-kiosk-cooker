@@ -55,6 +55,10 @@ apt update
 apt full-upgrade -y
 apt install -y xserver-xorg x11-xserver-utils xinit xinput xterm openbox unclutter
 
+# remove packagaes that may interfere with xorg driver selection
+apt remove -y --purge xserver-xorg-video-fbdev xserver-xorg-video-all || true
+apt autoremove -y
+
 # enable console autologin
 raspi-config nonint do_boot_behaviour B2
 
