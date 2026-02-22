@@ -107,6 +107,17 @@ sed -i -e 's/^uname/#uname/' /etc/update-motd.d/10-uname
 cp -f /etc/motd /etc/motd.bak
 echo "" > /etc/motd
 
+# create xorg configuration to force use of modesetting driver for vc4 and set it as primary GPU
+mkdir -p "/etc/X11/xorg.conf.d"
+cat << 'EOF' > /etc/X11/xorg.conf.d/99-vc4.conf
+Section "OutputClass"
+  Identifier "vc4"
+  MatchDriver "vc4"
+  Driver "modesetting"
+  Option "PrimaryGPU" "true"
+EndSection
+EOF
+
 # disable bash last login display
 su $app_user -c "touch ~/.hushlogin"
 
