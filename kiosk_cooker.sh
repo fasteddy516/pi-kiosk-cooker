@@ -191,37 +191,24 @@ set -euo pipefail
 export DISPLAY=":0"
 export XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}"
 
-# Tuning knobs
 XRANDR_WAIT_SECS=20
 APPLY_RETRIES=10
 APPLY_RETRY_DELAY_SECS=0.5
 
-# The outputs we expect
 OUT1="HDMI-A-1"
 OUT2="HDMI-A-2"
-
-# Desired modes (can be overridden later if needed)
 MODE1="1920x1080"
 MODE2="1920x1080"
-
-# --- Helpers ---------------------------------------------------------------
 
 have_xrandr_outputs() {
   xrandr --query 2>/dev/null | grep -q "^${OUT1} " && \
   xrandr --query 2>/dev/null | grep -q "^${OUT2} "
 }
 
-outputs_connected() {
-  xrandr --query 2>/dev/null | grep -q "^${OUT1} connected" && \
-  xrandr --query 2>/dev/null | grep -q "^${OUT2} connected"
-}
-
 wait_for_outputs() {
   local deadline=$((SECONDS + XRANDR_WAIT_SECS))
   while [ $SECONDS -lt $deadline ]; do
     if have_xrandr_outputs; then
-      # If nothing is physically connected, these might still show as disconnected.
-      # That’s okay: with your cmdline forcing + edid_firmware, they should usually show connected.
       return 0
     fi
     sleep 0.1
@@ -230,34 +217,37 @@ wait_for_outputs() {
 }
 
 apply_layout() {
-  # Example layout: OUT1 on left, OUT2 on right
+  # OUT1 left, OUT2 right
   xrandr \
     --output "${OUT1}" --mode "${MODE1}" --pos 0x0 --primary \
     --output "${OUT2}" --mode "${MODE2}" --right-of "${OUT1}"
 }
 
-layout_matches() {
-  # Verify both outputs are enabled with the desired modes.
-  # This is intentionally simple/robust.
-  xrandr --query 2>/dev/null | awk -v o1="$OUT1" -v o2="$OUT2" '
-    $1==o1 && $2=="connected" {found1=1}
-    $1==o2 && $2=="connected" {found2=1}
-    found1 && $0 ~ "\\b1920x1080\\b" {mode1=1}
-    found2 && $0 ~ "\\b1920x1080\\b" {mode2=1}
-    END { exit ! (found1 && found2 && mode1 && mode2) }
+mode_is_current() {
+  local out="$1"
+  local mode="$2"
+
+  # For the named output block, look for the mode line with a '*'
+  # Example: "   1920x1080     60.00*+  59.94"
+  xrandr --query 2>/dev/null | awk -v out="$out" -v mode="$mode" '
+    $1==out {in=1; next}
+    in && $1 ~ /^[A-Z]/ {in=0}
+    in && $1==mode && $0 ~ /\*/ {ok=1}
+    END { exit !ok }
   '
 }
 
-# --- Main ------------------------------------------------------------------
+layout_matches() {
+  mode_is_current "${OUT1}" "${MODE1}" && mode_is_current "${OUT2}" "${MODE2}"
+}
 
-# Wait for outputs to appear in xrandr
+# --- Main ---
 if ! wait_for_outputs; then
   echo "kiosk-ui-init: timed out waiting for ${OUT1}/${OUT2} to appear in xrandr" >&2
   xrandr --query >&2 || true
   exit 1
 fi
 
-# Apply with retries (xrandr can race early in X startup)
 for _ in $(seq 1 "${APPLY_RETRIES}"); do
   if apply_layout && layout_matches; then
     exit 0
