@@ -53,7 +53,7 @@ done
 # update installed packages
 apt update
 apt full-upgrade -y
-apt install -y xserver-xorg x11-xserver-utils xinit xinput xterm openbox unclutter
+apt install -y xserver-xorg x11-xserver-utils xinit xinput xterm openbox unclutter x11-utils
 
 # remove packagaes that may interfere with xorg driver selection
 apt remove -y --purge xserver-xorg-video-fbdev xserver-xorg-video-all || true
@@ -129,8 +129,106 @@ xset s off     # turn off screen saver
 ~/kiosk/start.sh &
 EOF
 
+# create xinitrc script to start openbox session
+su "$app_user" -c "mkdir -p ~/kiosk"
+cat << EOF > /home/$app_user/kiosk/xinitrc
+#!/bin/sh
+exec openbox-session
+EOF
+chown $app_user:$app_user /home/$app_user/kiosk/xinitrc
+chmod +x /home/$app_user/kiosk/xinitrc
+
+# add kiosk-x.service to startx on tty1 at boot
+cat << EOF > /etc/systemd/system/kiosk-x.service
+[Unit]
+Description=Kiosk X (startx) on tty1
+After=systemd-user-sessions.service
+Wants=systemd-user-sessions.service
+
+[Service]
+Type=simple
+User=$app_user
+Group=$app_user
+WorkingDirectory=/home/$app_user
+Environment=HOME=/home/$app_user
+Environment=DISPLAY=:0
+
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+PAMName=login
+
+ExecStart=/usr/bin/startx /home/$app_user/kiosk/xinitrc -- :0 -nolisten tcp vt1
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# create wait-for-x-ready script to ensure X is ready before starting the kiosk application
+cat << 'EOF' > /usr/local/bin/wait-for-x-ready
+#!/usr/bin/env bash
+set -euo pipefail
+export DISPLAY=:0
+
+# Wait for X socket
+for _ in $(seq 1 300); do
+  [ -S "/tmp/.X11-unix/X0" ] && break
+  sleep 0.1
+done
+
+# Wait for X to respond
+for _ in $(seq 1 300); do
+  if xdpyinfo >/dev/null 2>&1; then
+    exit 0
+  fi
+  sleep 0.1
+done
+
+echo "X did not become ready in time" >&2
+exit 1
+EOF
+chmod +x /usr/local/bin/wait-for-x-ready
+
+# create systemd target to signal when X is ready for the kiosk application to start
+cat << 'EOF' > /etc/systemd/system/kiosk-x-ready.target
+[Unit]
+Description=Kiosk X session is ready
+EOF
+
+# create systemd service to wait for X to be ready and then signal kiosk-x-ready.target
+cat << EOF > /etc/systemd/system/kiosk-x-ready.service
+[Unit]
+Description=Wait for kiosk X to be ready
+After=kiosk-x.service
+Wants=kiosk-x.service
+
+[Service]
+Type=oneshot
+User=$app_user
+Group=$app_user
+Environment=HOME=/home/$app_user
+Environment=DISPLAY=:0
+ExecStart=/usr/local/bin/wait-for-x-ready
+RemainAfterExit=yes
+
+[Install]
+WantedBy=kiosk-x-ready.target
+EOF
+
+# finish setting up systemd services and targets
+systemctl daemon-reload
+systemctl enable kiosk-x.service
+systemctl enable kiosk-x-ready.service
+systemctl enable kiosk-x-ready.target
+
 # create kiosk startup script
-su $app_user -c "mkdir ~/kiosk ; touch ~/kiosk/start.sh"
+su $app_user -c "touch ~/kiosk/start.sh"
 cat << EOF >> /home/$app_user/kiosk/start.sh
 # wait for Openbox to start and settle
 sleep 10s
