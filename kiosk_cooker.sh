@@ -86,11 +86,35 @@ sed -i -e '$a disable_splash=1\nhdmi_force_hotplug=1\n' /boot/firmware/config.tx
 wget "https://github.com/fasteddy516/pi-kiosk-cooker/raw/main/edid/1080P-2CH.edid"
 sudo mv ./1080P-2CH.edid /lib/firmware/1080P-2CH.edid
 
-# set cmdline.txt parameters:
-#    hide boot artifacts: console=, loglevel=, quiet, logo, plymouth
-#    hide console artifacts: vt.global_cursor
-#    set default display resolutions: video=
-sed -i -e 's/console=tty1/console=tty3/g' -e 's/$/ loglevel=3 quiet logo.nologo plymouth.ignore-serial-consoles vt.global_cursor_default=0 video=HDMI-A-1:1920x1080@60D video=HDMI-A-2:1920x1080@60D drm.edid_firmware=HDMI-A-1:1080P-2CH.edid drm.edid_firmware=HDMI-A-2:1080P-2CH.edid vc4.force_hotplug=0x03/' /boot/firmware/cmdline.txt
+# Read current cmdline configuration
+cmdline="$(cat /boot/firmware/cmdline.txt)"
+
+# Remove tokens we manage (repeatable-safe)
+cmdline="$(echo "$cmdline" \
+  | sed -E \
+    -e 's/(^| )loglevel=[^ ]+//g' \
+    -e 's/(^| )quiet//g' \
+    -e 's/(^| )logo\.nologo//g' \
+    -e 's/(^| )plymouth\.ignore-serial-consoles//g' \
+    -e 's/(^| )vt\.global_cursor_default=[^ ]+//g' \
+    -e 's/(^| )video=HDMI-A-1:[^ ]+//g' \
+    -e 's/(^| )video=HDMI-A-2:[^ ]+//g' \
+    -e 's/(^| )drm\.edid_firmware=HDMI-A-1:[^ ]+//g' \
+    -e 's/(^| )drm\.edid_firmware=HDMI-A-2:[^ ]+//g' \
+    -e 's/(^| )vc4\.force_hotplug=[^ ]+//g' \
+)"
+
+# Normalize whitespace
+cmdline="$(echo "$cmdline" | tr -s ' ' | sed -E 's/^ +| +$//g')"
+
+# Append our desired tokens exactly once
+cmdline="$cmdline loglevel=3 quiet logo.nologo plymouth.ignore-serial-consoles vt.global_cursor_default=0 \
+video=HDMI-A-1:1920x1080@60D video=HDMI-A-2:1920x1080@60D \
+drm.edid_firmware=HDMI-A-1:1080P-2CH.edid drm.edid_firmware=HDMI-A-2:1080P-2CH.edid \
+vc4.force_hotplug=0x03"
+
+# write the updated cmdline back to the file
+echo "$cmdline" > /boot/firmware/cmdline.txt
 
 # create default application user if necessary
 grep "^$app_user:" /etc/passwd > /dev/null
