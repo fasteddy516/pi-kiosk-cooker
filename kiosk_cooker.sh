@@ -184,52 +184,59 @@ EOF
 chmod +x /usr/local/bin/wait-for-x-ready
 
 # create kiosk-ui-init script to set up display layout with xrandr and ensure it’s applied correctly
-cat << 'EOF' > /usr/local/bin/kiosk-ui-init
+cat <<'EOF' | sudo tee /usr/local/bin/kiosk-ui-init >/dev/null
 #!/usr/bin/env bash
 set -euo pipefail
 
 export DISPLAY=":0"
-export XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}"
+export HOME="/home/mms"
+export XAUTHORITY="/home/mms/.Xauthority"
 
+# Target mode(s)
+MODE="1920x1080"
+
+SOCKET_WAIT_SECS=20
+AUTH_WAIT_SECS=20
 XRANDR_WAIT_SECS=20
-APPLY_RETRIES=10
+APPLY_RETRIES=20
 APPLY_RETRY_DELAY_SECS=0.5
 
-OUT1="HDMI-A-1"
-OUT2="HDMI-A-2"
-MODE1="1920x1080"
-MODE2="1920x1080"
+log() { echo "kiosk-ui-init: $*"; }
 
-have_xrandr_outputs() {
-  xrandr --query 2>/dev/null | grep -q "^${OUT1} " && \
-  xrandr --query 2>/dev/null | grep -q "^${OUT2} "
-}
-
-wait_for_outputs() {
-  local deadline=$((SECONDS + XRANDR_WAIT_SECS))
+wait_for_file() {
+  local path="$1" secs="$2"
+  local deadline=$((SECONDS + secs))
   while [ $SECONDS -lt $deadline ]; do
-    if have_xrandr_outputs; then
-      return 0
-    fi
+    [ -e "$path" ] && return 0
     sleep 0.1
   done
   return 1
 }
 
-apply_layout() {
-  # OUT1 left, OUT2 right
-  xrandr \
-    --output "${OUT1}" --mode "${MODE1}" --pos 0x0 --primary \
-    --output "${OUT2}" --mode "${MODE2}" --right-of "${OUT1}"
+wait_for_socket() {
+  local path="$1" secs="$2"
+  local deadline=$((SECONDS + secs))
+  while [ $SECONDS -lt $deadline ]; do
+    [ -S "$path" ] && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+xrandr_query() {
+  xrandr --query 2>/dev/null
+}
+
+pick_outputs() {
+  # Prefer KMS-style HDMI-A-* first, then HDMI-*
+  local outs
+  outs="$(xrandr_query | awk '/^HDMI-A-[0-9]+ /{print $1} /^HDMI-[0-9]+ /{print $1}' | head -n 2)"
+  echo "$outs"
 }
 
 mode_is_current() {
   local out="$1"
-  local mode="$2"
-
-  # For the named output block, look for the mode line with a '*'
-  # Example: "   1920x1080     60.00*+  59.94"
-  xrandr --query 2>/dev/null | awk -v out="$out" -v mode="$mode" '
+  xrandr_query | awk -v out="$out" -v mode="$MODE" '
     $1==out {in=1; next}
     in && $1 ~ /^[A-Z]/ {in=0}
     in && $1==mode && $0 ~ /\*/ {ok=1}
@@ -237,27 +244,67 @@ mode_is_current() {
   '
 }
 
-layout_matches() {
-  mode_is_current "${OUT1}" "${MODE1}" && mode_is_current "${OUT2}" "${MODE2}"
+main() {
+  log "Waiting for X socket..."
+  if ! wait_for_socket "/tmp/.X11-unix/X0" "$SOCKET_WAIT_SECS"; then
+    log "Timed out waiting for /tmp/.X11-unix/X0"
+    exit 1
+  fi
+
+  log "Waiting for Xauthority..."
+  if ! wait_for_file "$XAUTHORITY" "$AUTH_WAIT_SECS"; then
+    log "Timed out waiting for $XAUTHORITY"
+    ls -la /home/mms || true
+    exit 1
+  fi
+
+  log "Waiting for xrandr to respond..."
+  if ! wait_for_file "/usr/bin/xrandr" 1; then
+    log "xrandr not installed?"
+    exit 1
+  fi
+
+  local deadline=$((SECONDS + XRANDR_WAIT_SECS))
+  while [ $SECONDS -lt $deadline ]; do
+    if xrandr_query >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.1
+  done
+
+  local outs out1 out2
+  outs="$(pick_outputs)"
+  out1="$(echo "$outs" | sed -n '1p')"
+  out2="$(echo "$outs" | sed -n '2p')"
+
+  if [ -z "${out1:-}" ] || [ -z "${out2:-}" ]; then
+    log "Could not find two HDMI outputs via xrandr. Full xrandr output:"
+    xrandr --query || true
+    exit 1
+  fi
+
+  log "Using outputs: $out1 and $out2"
+
+  for i in $(seq 1 "$APPLY_RETRIES"); do
+    # Force modes/positions; don't require 'connected'
+    xrandr \
+      --output "$out1" --mode "$MODE" --pos 0x0 --primary \
+      --output "$out2" --mode "$MODE" --right-of "$out1" || true
+
+    if mode_is_current "$out1" && mode_is_current "$out2"; then
+      log "Layout applied successfully."
+      exit 0
+    fi
+
+    sleep "$APPLY_RETRY_DELAY_SECS"
+  done
+
+  log "Failed to apply/verify layout after retries. Current xrandr:"
+  xrandr --query || true
+  exit 1
 }
 
-# --- Main ---
-if ! wait_for_outputs; then
-  echo "kiosk-ui-init: timed out waiting for ${OUT1}/${OUT2} to appear in xrandr" >&2
-  xrandr --query >&2 || true
-  exit 1
-fi
-
-for _ in $(seq 1 "${APPLY_RETRIES}"); do
-  if apply_layout && layout_matches; then
-    exit 0
-  fi
-  sleep "${APPLY_RETRY_DELAY_SECS}"
-done
-
-echo "kiosk-ui-init: failed to apply/verify xrandr layout" >&2
-xrandr --query >&2 || true
-exit 1
+main "$@"
 EOF
 chmod +x /usr/local/bin/kiosk-ui-init
 
