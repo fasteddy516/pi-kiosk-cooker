@@ -110,7 +110,12 @@ echo "" > /etc/motd
 su $app_user -c "touch ~/.hushlogin"
 
 # start x environment after autologin
-su $app_user -c "echo '[[ -z \$DISPLAY && \$XDG_VTNR -eq 1 ]] && startx -- > ~/kiosk/startx.log 2>&1' > ~/.bash_profile"
+su "$app_user" -c "cat > ~/.bash_profile <<'EOF'
+# Auto-start X on console autologin (tty1) only.
+if [[ -z \$DISPLAY && \"\$(tty)\" == \"/dev/tty1\" ]]; then
+  exec startx -- -nolisten tcp vt1 > ~/kiosk/startx.log 2>&1
+fi
+EOF"
 
 # create openbox autostart script
 su $app_user -c "mkdir ~/.config ; mkdir ~/.config/openbox ; touch ~/.config/openbox/autostart"
