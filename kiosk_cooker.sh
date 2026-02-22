@@ -102,6 +102,9 @@ cmdline="$(echo "$cmdline" \
     -e 's/(^| )drm\.edid_firmware=HDMI-A-1:[^ ]+//g' \
     -e 's/(^| )drm\.edid_firmware=HDMI-A-2:[^ ]+//g' \
     -e 's/(^| )vc4\.force_hotplug=[^ ]+//g' \
+    -e 's/(^| )systemd\.show_status=[^ ]+//g' \
+    -e 's/(^| )fsck\.mode=[^ ]+//g' \
+    -e 's/(^| )fsck\.repair=[^ ]+//g' \
 )"
 
 # Normalize whitespace
@@ -109,6 +112,7 @@ cmdline="$(echo "$cmdline" | tr -s ' ' | sed -E 's/^ +| +$//g')"
 
 # Append our desired tokens exactly once
 cmdline="$cmdline loglevel=3 quiet logo.nologo plymouth.ignore-serial-consoles vt.global_cursor_default=0 \
+systemd.show_status=false fsck.repair=yes \
 video=HDMI-A-1:1920x1080@60D video=HDMI-A-2:1920x1080@60D \
 drm.edid_firmware=HDMI-A-1:1080P-2CH.edid drm.edid_firmware=HDMI-A-2:1080P-2CH.edid \
 vc4.force_hotplug=0x03"
