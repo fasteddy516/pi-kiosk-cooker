@@ -199,6 +199,9 @@ chmod +x /usr/local/bin/wait-for-x-ready
 cat << 'EOF' > /etc/systemd/system/kiosk-x-ready.target
 [Unit]
 Description=Kiosk X session is ready
+
+[Install]
+WantedBy=multi-user.target
 EOF
 
 # create systemd service to wait for X to be ready and then signal kiosk-x-ready.target
@@ -224,7 +227,6 @@ EOF
 # finish setting up systemd services and targets
 systemctl daemon-reload
 systemctl enable kiosk-x.service
-systemctl enable kiosk-x-ready.service
 systemctl enable kiosk-x-ready.target
 
 # create kiosk startup script
