@@ -20,6 +20,11 @@ if [ ! -v reboot ]; then
   reboot=1
 fi
 
+# set default demo state if necessary
+if [ ! -v demo ]; then
+  demo=1
+fi
+
 # set default application username if it hasn't been specified
 if [ ! -v app_user ]; then
   app_user=pi
@@ -43,6 +48,10 @@ for arg in "$@"; do
       ;;
     --no-reboot)
       reboot=0
+      shift
+      ;;
+    --no-demo)
+      demo=0
       shift
       ;;
     *)
@@ -224,10 +233,35 @@ RemainAfterExit=yes
 WantedBy=kiosk-x-ready.target
 EOF
 
+# create xterm demo service to run a demo application after X is ready (if demo mode is enabled)
+cat << EOF > /etc/systemd/system/xterm-demo.service
+[Unit]
+Description=XTerm demo (kiosk install verification)
+Requires=kiosk-x-ready.target
+After=kiosk-x-ready.target
+
+[Service]
+Type=simple
+User=$app_user
+Group=$app_user
+WorkingDirectory=/home/$app_user
+Environment=HOME=/home/$app_user
+Environment=DISPLAY=:0
+ExecStart=/home/$app_user/kiosk/xterm_demo.sh
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 # finish setting up systemd services and targets
 systemctl daemon-reload
 systemctl enable kiosk-x.service
 systemctl enable kiosk-x-ready.target
+if [ $demo -eq 1 ]; then
+  systemctl enable xterm-demo.service
+fi
 
 # create kiosk startup script
 su $app_user -c "touch ~/kiosk/start.sh"
@@ -248,12 +282,23 @@ if [ -f ~/application/start.sh ]; then
   ~/application/start.sh &
 elif [ -f ~/application/start.py ]; then
   python ~/application/start.py &
-else
-  xterm -geometry 285x65+100+100 -xrm 'XTerm.vt100.allowTitleOps: false' -T "This is HDMI-1" &
-  xterm -geometry 285x65+2020+100 -xrm 'XTerm.vt100.allowTitleOps: false' -T "This is HDMI-2"  &
 fi
 EOF
 su $app_user -c "chmod +x ~/kiosk/start.sh"
+
+# create xterm demo script
+su $app_user -c "touch ~/kiosk/xterm_demo.sh"
+cat << 'EOF' > /home/$app_user/kiosk/xterm_demo.sh
+#!/bin/bash
+set -euo pipefail
+
+# Optional: let the session settle a moment
+sleep 2
+
+xterm -geometry 285x65+100+100 -xrm 'XTerm.vt100.allowTitleOps: false' -T "This is HDMI-1" &
+xterm -geometry 285x65+2020+100 -xrm 'XTerm.vt100.allowTitleOps: false' -T "This is HDMI-2" &
+EOF
+su $app_user -c "chmod +x ~/kiosk/xterm_demo.sh"
 
 # Create/replace rc.local script
 cat << 'EOF' > /etc/rc.local
