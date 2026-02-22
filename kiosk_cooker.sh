@@ -237,9 +237,9 @@ pick_outputs() {
 mode_is_current() {
   local out="$1"
   xrandr_query | awk -v out="$out" -v mode="$MODE" '
-    $1==out {in=1; next}
-    in && $1 ~ /^[A-Z]/ {in=0}
-    in && $1==mode && $0 ~ /\*/ {ok=1}
+    $1==out {inside=1; next}
+    inside && $1 ~ /^[A-Z]/ {inside=0}
+    inside && $1==mode && $0 ~ /\*/ {ok=1}
     END { exit !ok }
   '
 }
@@ -322,6 +322,7 @@ Group=$app_user
 WorkingDirectory=/home/$app_user
 Environment=HOME=/home/$app_user
 Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/$app_user/.Xauthority
 
 TTYPath=/dev/tty1
 TTYReset=yes
@@ -362,6 +363,7 @@ User=$app_user
 Group=$app_user
 Environment=HOME=/home/$app_user
 Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/$app_user/.Xauthority
 ExecStart=/usr/local/bin/wait-for-x-ready
 RemainAfterExit=yes
 
@@ -392,6 +394,7 @@ Group=$app_user
 WorkingDirectory=/home/$app_user
 Environment=HOME=/home/$app_user
 Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/$app_user/.Xauthority
 ExecStart=/usr/local/bin/kiosk-ui-init
 RemainAfterExit=yes
 
@@ -413,6 +416,7 @@ Group=$app_user
 WorkingDirectory=/home/$app_user
 Environment=HOME=/home/$app_user
 Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/$app_user/.Xauthority
 ExecStart=/home/$app_user/kiosk/xterm_demo.sh
 Restart=on-failure
 RestartSec=2
@@ -440,8 +444,9 @@ set -euo pipefail
 # Optional: let the session settle a moment
 sleep 2
 
-xterm -geometry 285x65+100+100 -xrm 'XTerm.vt100.allowTitleOps: false' -T "This is HDMI-1" &
-xterm -geometry 285x65+2020+100 -xrm 'XTerm.vt100.allowTitleOps: false' -T "This is HDMI-2" &
+xterm -geometry 285x65+100+100 -xrm 'XTerm.vt100.allowTitleOps: false' -T "This is HDMI-1" & p1=$!
+xterm -geometry 285x65+2020+100 -xrm 'XTerm.vt100.allowTitleOps: false' -T "This is HDMI-2" & p2=$!
+wait "$p1" "p2"
 EOF
 su $app_user -c "chmod +x ~/kiosk/xterm_demo.sh"
 
