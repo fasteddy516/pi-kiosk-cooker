@@ -147,9 +147,6 @@ cat << EOF >> /home/$app_user/.config/openbox/autostart
 xset -dpms     # turn off display power management system
 xset s noblank # turn off screen blanking
 xset s off     # turn off screen saver
-
-# run kiosk startup script in background
-~/kiosk/start.sh &
 EOF
 
 # create xinitrc script to start openbox session
@@ -276,29 +273,6 @@ systemctl enable kiosk-x-ready.target
 if [ $demo -eq 1 ]; then
   systemctl enable xterm-demo.service
 fi
-
-# create kiosk startup script
-su $app_user -c "touch ~/kiosk/start.sh"
-cat << EOF >> /home/$app_user/kiosk/start.sh
-# wait for Openbox to start and settle
-sleep 10s
-
-# force HDMI-1 to the desired resolution and wait for the change to complete
-xrandr --output HDMI-1 --mode 1920x1080
-sleep 5s
-
-# force HDMI-2 to the desired resolution and position and wait for the change to complete
-xrandr --output HDMI-2 --mode 1920x1080 --right-of HDMI-1
-sleep 5s
-
-# run the kiosk application if it exists
-if [ -f ~/application/start.sh ]; then
-  ~/application/start.sh &
-elif [ -f ~/application/start.py ]; then
-  python ~/application/start.py &
-fi
-EOF
-su $app_user -c "chmod +x ~/kiosk/start.sh"
 
 # create xterm demo script
 su $app_user -c "touch ~/kiosk/xterm_demo.sh"
