@@ -102,13 +102,6 @@ else
   echo "User '$app_user' already exists"
 fi
 
-# hide operating system information display on login
-sed -i -e 's/^uname/#uname/' /etc/update-motd.d/10-uname
-
-# disable message-of-the-day
-cp -f /etc/motd /etc/motd.bak
-echo "" > /etc/motd
-
 # create xorg configuration to force use of modesetting driver for vc4 and set it as primary GPU
 mkdir -p "/etc/X11/xorg.conf.d"
 cat << 'EOF' > /etc/X11/xorg.conf.d/99-vc4.conf
@@ -119,9 +112,6 @@ Section "OutputClass"
   Option "PrimaryGPU" "true"
 EndSection
 EOF
-
-# disable bash last login display
-su $app_user -c "touch ~/.hushlogin"
 
 # disable getty on tty1 to prevent interference with Xorg
 systemctl disable getty@tty1.service
