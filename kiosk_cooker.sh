@@ -64,7 +64,7 @@ apt update
 apt full-upgrade -y
 apt install -y xserver-xorg x11-xserver-utils xinit xinput xterm openbox unclutter x11-utils
 
-# remove packagaes that may interfere with xorg driver selection
+# remove packages that may interfere with xorg driver selection
 apt remove -y --purge xserver-xorg-video-fbdev xserver-xorg-video-all || true
 apt autoremove -y
 
