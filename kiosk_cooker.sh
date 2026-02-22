@@ -450,32 +450,6 @@ wait "$p1" "p2"
 EOF
 su $app_user -c "chmod +x ~/kiosk/xterm_demo.sh"
 
-# Create/replace rc.local script
-cat << 'EOF' > /etc/rc.local
-#!/bin/bash
-
-# Check if the first-boot script exists before executing
-if [ -x /usr/local/bin/first-boot.sh ]; then
-  echo "* Running first-boot.sh script"
-  /usr/local/bin/first-boot.sh
-  echo "* first-boot.sh script completed"
-else
-  echo "@ first-boot.sh script not found or not executable, skipping"
-fi
-
-# Check if the app-update script exists before executing
-if [ -x /usr/local/bin/app-update.sh ]; then
-  echo "* Running app-update.sh script"
-  /usr/local/bin/app-update.sh
-  echo "* app-update.sh script completed"
-else
-  echo "@ app-update.sh script not found or not executable, skipping"
-fi
-
-exit 0
-EOF
-chmod +x /etc/rc.local
-
 # all done - countdown to reboot
 if [ $reboot -eq 1 ]; then
   echo ""
