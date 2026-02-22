@@ -114,6 +114,9 @@ EOF
 # disable bash last login display
 su $app_user -c "touch ~/.hushlogin"
 
+# disable getty on tty1 to prevent interference with Xorg
+systemctl disable getty@tty1.service
+
 # create openbox autostart script
 su $app_user -c "mkdir ~/.config ; mkdir ~/.config/openbox ; touch ~/.config/openbox/autostart"
 cat << EOF >> /home/$app_user/.config/openbox/autostart
