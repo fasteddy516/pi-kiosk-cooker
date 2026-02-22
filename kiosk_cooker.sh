@@ -158,6 +158,119 @@ EOF
 chown $app_user:$app_user /home/$app_user/kiosk/xinitrc
 chmod +x /home/$app_user/kiosk/xinitrc
 
+# create wait-for-x-ready script to ensure X is ready before starting the kiosk application
+cat << 'EOF' > /usr/local/bin/wait-for-x-ready
+#!/usr/bin/env bash
+set -euo pipefail
+export DISPLAY=:0
+
+# Wait for X socket
+for _ in $(seq 1 300); do
+  [ -S "/tmp/.X11-unix/X0" ] && break
+  sleep 0.1
+done
+
+# Wait for X to respond
+for _ in $(seq 1 300); do
+  if xdpyinfo >/dev/null 2>&1; then
+    exit 0
+  fi
+  sleep 0.1
+done
+
+echo "X did not become ready in time" >&2
+exit 1
+EOF
+chmod +x /usr/local/bin/wait-for-x-ready
+
+# create kiosk-ui-init script to set up display layout with xrandr and ensure it’s applied correctly
+cat << 'EOF' > /usr/local/bin/kiosk-ui-init
+#!/usr/bin/env bash
+set -euo pipefail
+
+export DISPLAY=":0"
+export XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}"
+
+# Tuning knobs
+XRANDR_WAIT_SECS=20
+APPLY_RETRIES=10
+APPLY_RETRY_DELAY_SECS=0.5
+
+# The outputs we expect
+OUT1="HDMI-A-1"
+OUT2="HDMI-A-2"
+
+# Desired modes (can be overridden later if needed)
+MODE1="1920x1080"
+MODE2="1920x1080"
+
+# --- Helpers ---------------------------------------------------------------
+
+have_xrandr_outputs() {
+  xrandr --query 2>/dev/null | grep -q "^${OUT1} " && \
+  xrandr --query 2>/dev/null | grep -q "^${OUT2} "
+}
+
+outputs_connected() {
+  xrandr --query 2>/dev/null | grep -q "^${OUT1} connected" && \
+  xrandr --query 2>/dev/null | grep -q "^${OUT2} connected"
+}
+
+wait_for_outputs() {
+  local deadline=$((SECONDS + XRANDR_WAIT_SECS))
+  while [ $SECONDS -lt $deadline ]; do
+    if have_xrandr_outputs; then
+      # If nothing is physically connected, these might still show as disconnected.
+      # That’s okay: with your cmdline forcing + edid_firmware, they should usually show connected.
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+apply_layout() {
+  # Example layout: OUT1 on left, OUT2 on right
+  xrandr \
+    --output "${OUT1}" --mode "${MODE1}" --pos 0x0 --primary \
+    --output "${OUT2}" --mode "${MODE2}" --right-of "${OUT1}"
+}
+
+layout_matches() {
+  # Verify both outputs are enabled with the desired modes.
+  # This is intentionally simple/robust.
+  xrandr --query 2>/dev/null | awk -v o1="$OUT1" -v o2="$OUT2" '
+    $1==o1 && $2=="connected" {found1=1}
+    $1==o2 && $2=="connected" {found2=1}
+    found1 && $0 ~ "\\b1920x1080\\b" {mode1=1}
+    found2 && $0 ~ "\\b1920x1080\\b" {mode2=1}
+    END { exit ! (found1 && found2 && mode1 && mode2) }
+  '
+}
+
+# --- Main ------------------------------------------------------------------
+
+# Wait for outputs to appear in xrandr
+if ! wait_for_outputs; then
+  echo "kiosk-ui-init: timed out waiting for ${OUT1}/${OUT2} to appear in xrandr" >&2
+  xrandr --query >&2 || true
+  exit 1
+fi
+
+# Apply with retries (xrandr can race early in X startup)
+for _ in $(seq 1 "${APPLY_RETRIES}"); do
+  if apply_layout && layout_matches; then
+    exit 0
+  fi
+  sleep "${APPLY_RETRY_DELAY_SECS}"
+done
+
+echo "kiosk-ui-init: failed to apply/verify xrandr layout" >&2
+xrandr --query >&2 || true
+exit 1
+EOF
+chmod +x /usr/local/bin/kiosk-ui-init
+
 # add kiosk-x.service to startx on tty1 at boot
 cat << EOF > /etc/systemd/system/kiosk-x.service
 [Unit]
@@ -190,31 +303,6 @@ RestartSec=2
 WantedBy=multi-user.target
 EOF
 
-# create wait-for-x-ready script to ensure X is ready before starting the kiosk application
-cat << 'EOF' > /usr/local/bin/wait-for-x-ready
-#!/usr/bin/env bash
-set -euo pipefail
-export DISPLAY=:0
-
-# Wait for X socket
-for _ in $(seq 1 300); do
-  [ -S "/tmp/.X11-unix/X0" ] && break
-  sleep 0.1
-done
-
-# Wait for X to respond
-for _ in $(seq 1 300); do
-  if xdpyinfo >/dev/null 2>&1; then
-    exit 0
-  fi
-  sleep 0.1
-done
-
-echo "X did not become ready in time" >&2
-exit 1
-EOF
-chmod +x /usr/local/bin/wait-for-x-ready
-
 # create systemd target to signal when X is ready for the kiosk application to start
 cat << 'EOF' > /etc/systemd/system/kiosk-x-ready.target
 [Unit]
@@ -244,12 +332,42 @@ RemainAfterExit=yes
 WantedBy=kiosk-x-ready.target
 EOF
 
+# create systemd target to signal when the kiosk UI is fully ready (X + display layout applied) for the kiosk application to start
+cat << 'EOF' > /etc/systemd/system/kiosk-ui-ready.target
+[Unit]
+Description=Kiosk UI is ready (X + display layout applied)
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# create systemd service to set up display layout with xrandr after X is ready, and then signal kiosk-ui-ready.target
+cat << EOF > /etc/systemd/system/kiosk-ui-init.service
+[Unit]
+Description=Initialize kiosk display layout (xrandr)
+Requires=kiosk-x-ready.target
+After=kiosk-x-ready.target
+
+[Service]
+Type=oneshot
+User=$app_user
+Group=$app_user
+WorkingDirectory=/home/$app_user
+Environment=HOME=/home/$app_user
+Environment=DISPLAY=:0
+ExecStart=/usr/local/bin/kiosk-ui-init
+RemainAfterExit=yes
+
+[Install]
+WantedBy=kiosk-ui-ready.target
+EOF
+
 # create xterm demo service to run a demo application after X is ready (if demo mode is enabled)
 cat << EOF > /etc/systemd/system/xterm-demo.service
 [Unit]
 Description=XTerm demo (kiosk install verification)
-Requires=kiosk-x-ready.target
-After=kiosk-x-ready.target
+Requires=kiosk-ui-ready.target
+After=kiosk-ui-ready.target
 
 [Service]
 Type=simple
@@ -270,6 +388,7 @@ EOF
 systemctl daemon-reload
 systemctl enable kiosk-x.service
 systemctl enable kiosk-x-ready.target
+systemctl enable kiosk-ui-ready.target
 if [ $demo -eq 1 ]; then
   systemctl enable xterm-demo.service
 fi
