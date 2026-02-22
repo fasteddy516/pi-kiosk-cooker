@@ -59,9 +59,6 @@ apt install -y xserver-xorg x11-xserver-utils xinit xinput xterm openbox unclutt
 apt remove -y --purge xserver-xorg-video-fbdev xserver-xorg-video-all || true
 apt autoremove -y
 
-# enable console autologin
-raspi-config nonint do_boot_behaviour B2
-
 # disable splash screen (1 = disabled)
 raspi-config nonint do_boot_splash 1
 
@@ -95,10 +92,6 @@ if [ $? -ne 0 ]; then
 else  
   echo "User '$app_user' already exists"
 fi
-
-# modify console autologin to use application user and clean up some login artifacts
-sed -i -e "s|^ExecStart=-.*|ExecStart=-/sbin/agetty --skip-login --nonewline --noissue --autologin $app_user --noclear %I \$TERM|" /etc/systemd/system/getty@tty1.service.d/autologin.conf
-systemctl daemon-reload
 
 # hide operating system information display on login
 sed -i -e 's/^uname/#uname/' /etc/update-motd.d/10-uname
