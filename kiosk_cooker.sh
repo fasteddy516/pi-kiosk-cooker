@@ -20,6 +20,11 @@ if [ ! -v reboot ]; then
   reboot=1
 fi
 
+# set default demo state if necessary
+if [ ! -v demo ]; then
+  demo=1
+fi
+
 # set default application username if it hasn't been specified
 if [ ! -v app_user ]; then
   app_user=pi
@@ -45,6 +50,10 @@ for arg in "$@"; do
       reboot=0
       shift
       ;;
+    --no-demo)
+      demo=0
+      shift
+      ;;
     *)
       ;;
   esac
@@ -53,14 +62,11 @@ done
 # update installed packages
 apt update
 apt full-upgrade -y
-apt install -y xserver-xorg x11-xserver-utils xinit xinput xterm openbox unclutter
+apt install -y xserver-xorg x11-xserver-utils xinit xinput xterm openbox unclutter x11-utils
 
-# remove packagaes that may interfere with xorg driver selection
+# remove packages that may interfere with xorg driver selection
 apt remove -y --purge xserver-xorg-video-fbdev xserver-xorg-video-all || true
 apt autoremove -y
-
-# enable console autologin
-raspi-config nonint do_boot_behaviour B2
 
 # disable splash screen (1 = disabled)
 raspi-config nonint do_boot_splash 1
@@ -80,11 +86,35 @@ sed -i -e '$a disable_splash=1\nhdmi_force_hotplug=1\n' /boot/firmware/config.tx
 wget "https://github.com/fasteddy516/pi-kiosk-cooker/raw/main/edid/1080P-2CH.edid"
 sudo mv ./1080P-2CH.edid /lib/firmware/1080P-2CH.edid
 
-# set cmdline.txt parameters:
-#    hide boot artifacts: console=, loglevel=, quiet, logo, plymouth
-#    hide console artifacts: vt.global_cursor
-#    set default display resolutions: video=
-sed -i -e 's/console=tty1/console=tty3/g' -e 's/$/ loglevel=3 quiet logo.nologo plymouth.ignore-serial-consoles vt.global_cursor_default=0 video=HDMI-A-1:1920x1080@60D video=HDMI-A-2:1920x1080@60D drm.edid_firmware=HDMI-A-1:1080P-2CH.edid drm.edid_firmware=HDMI-A-2:1080P-2CH.edid vc4.force_hotplug=0x03/' /boot/firmware/cmdline.txt
+# Read current cmdline configuration
+cmdline="$(cat /boot/firmware/cmdline.txt)"
+
+# Remove tokens we manage (repeatable-safe)
+cmdline="$(echo "$cmdline" \
+  | sed -E \
+    -e 's/(^| )loglevel=[^ ]+//g' \
+    -e 's/(^| )quiet//g' \
+    -e 's/(^| )logo\.nologo//g' \
+    -e 's/(^| )plymouth\.ignore-serial-consoles//g' \
+    -e 's/(^| )vt\.global_cursor_default=[^ ]+//g' \
+    -e 's/(^| )video=HDMI-A-1:[^ ]+//g' \
+    -e 's/(^| )video=HDMI-A-2:[^ ]+//g' \
+    -e 's/(^| )drm\.edid_firmware=HDMI-A-1:[^ ]+//g' \
+    -e 's/(^| )drm\.edid_firmware=HDMI-A-2:[^ ]+//g' \
+    -e 's/(^| )vc4\.force_hotplug=[^ ]+//g' \
+)"
+
+# Normalize whitespace
+cmdline="$(echo "$cmdline" | tr -s ' ' | sed -E 's/^ +| +$//g')"
+
+# Append our desired tokens exactly once
+cmdline="$cmdline loglevel=3 quiet logo.nologo plymouth.ignore-serial-consoles vt.global_cursor_default=0 \
+video=HDMI-A-1:1920x1080@60D video=HDMI-A-2:1920x1080@60D \
+drm.edid_firmware=HDMI-A-1:1080P-2CH.edid drm.edid_firmware=HDMI-A-2:1080P-2CH.edid \
+vc4.force_hotplug=0x03"
+
+# write the updated cmdline back to the file
+echo "$cmdline" > /boot/firmware/cmdline.txt
 
 # create default application user if necessary
 grep "^$app_user:" /etc/passwd > /dev/null
@@ -95,17 +125,6 @@ if [ $? -ne 0 ]; then
 else  
   echo "User '$app_user' already exists"
 fi
-
-# modify console autologin to use application user and clean up some login artifacts
-sed -i -e "s|^ExecStart=-.*|ExecStart=-/sbin/agetty --skip-login --nonewline --noissue --autologin $app_user --noclear %I \$TERM|" /etc/systemd/system/getty@tty1.service.d/autologin.conf
-systemctl daemon-reload
-
-# hide operating system information display on login
-sed -i -e 's/^uname/#uname/' /etc/update-motd.d/10-uname
-
-# disable message-of-the-day
-cp -f /etc/motd /etc/motd.bak
-echo "" > /etc/motd
 
 # create xorg configuration to force use of modesetting driver for vc4 and set it as primary GPU
 mkdir -p "/etc/X11/xorg.conf.d"
@@ -118,16 +137,8 @@ Section "OutputClass"
 EndSection
 EOF
 
-# disable bash last login display
-su $app_user -c "touch ~/.hushlogin"
-
-# start x environment after autologin
-su "$app_user" -c "cat > ~/.bash_profile <<'EOF'
-# Auto-start X on console autologin (tty1) only.
-if [[ -z \$DISPLAY && \"\$(tty)\" == \"/dev/tty1\" ]]; then
-  exec startx -- -nolisten tcp vt1 > ~/kiosk/startx.log 2>&1
-fi
-EOF"
+# disable getty on tty1 to prevent interference with Xorg
+systemctl disable getty@tty1.service
 
 # create openbox autostart script
 su $app_user -c "mkdir ~/.config ; mkdir ~/.config/openbox ; touch ~/.config/openbox/autostart"
@@ -136,62 +147,308 @@ cat << EOF >> /home/$app_user/.config/openbox/autostart
 xset -dpms     # turn off display power management system
 xset s noblank # turn off screen blanking
 xset s off     # turn off screen saver
-
-# run kiosk startup script in background
-~/kiosk/start.sh &
 EOF
 
-# create kiosk startup script
-su $app_user -c "mkdir ~/kiosk ; touch ~/kiosk/start.sh"
-cat << EOF >> /home/$app_user/kiosk/start.sh
-# wait for Openbox to start and settle
-sleep 10s
+# create xinitrc script to start openbox session
+su "$app_user" -c "mkdir -p ~/kiosk"
+cat << EOF > /home/$app_user/kiosk/xinitrc
+#!/bin/sh
+exec openbox-session
+EOF
+chown $app_user:$app_user /home/$app_user/kiosk/xinitrc
+chmod +x /home/$app_user/kiosk/xinitrc
 
-# force HDMI-1 to the desired resolution and wait for the change to complete
-xrandr --output HDMI-1 --mode 1920x1080
-sleep 5s
+# create wait-for-x-ready script to ensure X is ready before starting the kiosk application
+cat << 'EOF' > /usr/local/bin/wait-for-x-ready
+#!/usr/bin/env bash
+set -euo pipefail
+export DISPLAY=:0
 
-# force HDMI-2 to the desired resolution and position and wait for the change to complete
-xrandr --output HDMI-2 --mode 1920x1080 --right-of HDMI-1
-sleep 5s
+# Wait for X socket
+for _ in $(seq 1 300); do
+  [ -S "/tmp/.X11-unix/X0" ] && break
+  sleep 0.1
+done
 
-# run the kiosk application if it exists
-if [ -f ~/application/start.sh ]; then
-  ~/application/start.sh &
-elif [ -f ~/application/start.py ]; then
-  python ~/application/start.py &
-else
-  xterm -geometry 285x65+100+100 -xrm 'XTerm.vt100.allowTitleOps: false' -T "This is HDMI-1" &
-  xterm -geometry 285x65+2020+100 -xrm 'XTerm.vt100.allowTitleOps: false' -T "This is HDMI-2"  &
+# Wait for X to respond
+for _ in $(seq 1 300); do
+  if xdpyinfo >/dev/null 2>&1; then
+    exit 0
+  fi
+  sleep 0.1
+done
+
+echo "X did not become ready in time" >&2
+exit 1
+EOF
+chmod +x /usr/local/bin/wait-for-x-ready
+
+# create kiosk-ui-init script to set up display layout with xrandr and ensure it’s applied correctly
+cat <<'EOF' | sudo tee /usr/local/bin/kiosk-ui-init >/dev/null
+#!/usr/bin/env bash
+set -euo pipefail
+
+export DISPLAY=":0"
+export HOME="/home/mms"
+export XAUTHORITY="/home/mms/.Xauthority"
+
+# Target mode(s)
+MODE="1920x1080"
+
+SOCKET_WAIT_SECS=20
+AUTH_WAIT_SECS=20
+XRANDR_WAIT_SECS=20
+APPLY_RETRIES=20
+APPLY_RETRY_DELAY_SECS=0.5
+
+log() { echo "kiosk-ui-init: $*"; }
+
+wait_for_file() {
+  local path="$1" secs="$2"
+  local deadline=$((SECONDS + secs))
+  while [ $SECONDS -lt $deadline ]; do
+    [ -e "$path" ] && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+wait_for_socket() {
+  local path="$1" secs="$2"
+  local deadline=$((SECONDS + secs))
+  while [ $SECONDS -lt $deadline ]; do
+    [ -S "$path" ] && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+xrandr_query() {
+  xrandr --query 2>/dev/null
+}
+
+pick_outputs() {
+  # Prefer KMS-style HDMI-A-* first, then HDMI-*
+  local outs
+  outs="$(xrandr_query | awk '/^HDMI-A-[0-9]+ /{print $1} /^HDMI-[0-9]+ /{print $1}' | head -n 2)"
+  echo "$outs"
+}
+
+mode_is_current() {
+  local out="$1"
+  xrandr_query | awk -v out="$out" -v mode="$MODE" '
+    $1==out {inside=1; next}
+    inside && $1 ~ /^[A-Z]/ {inside=0}
+    inside && $1==mode && $0 ~ /\*/ {ok=1}
+    END { exit !ok }
+  '
+}
+
+main() {
+  log "Waiting for X socket..."
+  if ! wait_for_socket "/tmp/.X11-unix/X0" "$SOCKET_WAIT_SECS"; then
+    log "Timed out waiting for /tmp/.X11-unix/X0"
+    exit 1
+  fi
+
+  log "Waiting for Xauthority..."
+  if ! wait_for_file "$XAUTHORITY" "$AUTH_WAIT_SECS"; then
+    log "Timed out waiting for $XAUTHORITY"
+    ls -la /home/mms || true
+    exit 1
+  fi
+
+  log "Waiting for xrandr to respond..."
+  if ! wait_for_file "/usr/bin/xrandr" 1; then
+    log "xrandr not installed?"
+    exit 1
+  fi
+
+  local deadline=$((SECONDS + XRANDR_WAIT_SECS))
+  while [ $SECONDS -lt $deadline ]; do
+    if xrandr_query >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.1
+  done
+
+  local outs out1 out2
+  outs="$(pick_outputs)"
+  out1="$(echo "$outs" | sed -n '1p')"
+  out2="$(echo "$outs" | sed -n '2p')"
+
+  if [ -z "${out1:-}" ] || [ -z "${out2:-}" ]; then
+    log "Could not find two HDMI outputs via xrandr. Full xrandr output:"
+    xrandr --query || true
+    exit 1
+  fi
+
+  log "Using outputs: $out1 and $out2"
+
+  for i in $(seq 1 "$APPLY_RETRIES"); do
+    # Force modes/positions; don't require 'connected'
+    xrandr \
+      --output "$out1" --mode "$MODE" --pos 0x0 --primary \
+      --output "$out2" --mode "$MODE" --right-of "$out1" || true
+
+    if mode_is_current "$out1" && mode_is_current "$out2"; then
+      log "Layout applied successfully."
+      exit 0
+    fi
+
+    sleep "$APPLY_RETRY_DELAY_SECS"
+  done
+
+  log "Failed to apply/verify layout after retries. Current xrandr:"
+  xrandr --query || true
+  exit 1
+}
+
+main "$@"
+EOF
+chmod +x /usr/local/bin/kiosk-ui-init
+
+# add kiosk-x.service to startx on tty1 at boot
+cat << EOF > /etc/systemd/system/kiosk-x.service
+[Unit]
+Description=Kiosk X (startx) on tty1
+After=systemd-user-sessions.service
+Wants=systemd-user-sessions.service
+
+[Service]
+Type=simple
+User=$app_user
+Group=$app_user
+WorkingDirectory=/home/$app_user
+Environment=HOME=/home/$app_user
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/$app_user/.Xauthority
+
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+PAMName=login
+
+ExecStart=/usr/bin/startx /home/$app_user/kiosk/xinitrc -- :0 -nolisten tcp vt1
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# create systemd target to signal when X is ready for the kiosk application to start
+cat << 'EOF' > /etc/systemd/system/kiosk-x-ready.target
+[Unit]
+Description=Kiosk X session is ready
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# create systemd service to wait for X to be ready and then signal kiosk-x-ready.target
+cat << EOF > /etc/systemd/system/kiosk-x-ready.service
+[Unit]
+Description=Wait for kiosk X to be ready
+After=kiosk-x.service
+Wants=kiosk-x.service
+
+[Service]
+Type=oneshot
+User=$app_user
+Group=$app_user
+Environment=HOME=/home/$app_user
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/$app_user/.Xauthority
+ExecStart=/usr/local/bin/wait-for-x-ready
+RemainAfterExit=yes
+
+[Install]
+WantedBy=kiosk-x-ready.target
+EOF
+
+# create systemd target to signal when the kiosk UI is fully ready (X + display layout applied) for the kiosk application to start
+cat << 'EOF' > /etc/systemd/system/kiosk-ui-ready.target
+[Unit]
+Description=Kiosk UI is ready (X + display layout applied)
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# create systemd service to set up display layout with xrandr after X is ready, and then signal kiosk-ui-ready.target
+cat << EOF > /etc/systemd/system/kiosk-ui-init.service
+[Unit]
+Description=Initialize kiosk display layout (xrandr)
+Requires=kiosk-x-ready.target
+After=kiosk-x-ready.target
+
+[Service]
+Type=oneshot
+User=$app_user
+Group=$app_user
+WorkingDirectory=/home/$app_user
+Environment=HOME=/home/$app_user
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/$app_user/.Xauthority
+ExecStart=/usr/local/bin/kiosk-ui-init
+RemainAfterExit=yes
+
+[Install]
+WantedBy=kiosk-ui-ready.target
+EOF
+
+# create xterm demo service to run a demo application after X is ready (if demo mode is enabled)
+cat << EOF > /etc/systemd/system/xterm-demo.service
+[Unit]
+Description=XTerm demo (kiosk install verification)
+Requires=kiosk-ui-ready.target
+After=kiosk-ui-ready.target
+
+[Service]
+Type=simple
+User=$app_user
+Group=$app_user
+WorkingDirectory=/home/$app_user
+Environment=HOME=/home/$app_user
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/$app_user/.Xauthority
+ExecStart=/home/$app_user/kiosk/xterm_demo.sh
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# finish setting up systemd services and targets
+systemctl daemon-reload
+systemctl enable kiosk-x.service
+systemctl enable kiosk-ui-ready.target
+systemctl enable kiosk-ui-init.service
+systemctl enable kiosk-x-ready.target
+if [ $demo -eq 1 ]; then
+  systemctl enable xterm-demo.service
 fi
-EOF
-su $app_user -c "chmod +x ~/kiosk/start.sh"
 
-# Create/replace rc.local script
-cat << 'EOF' > /etc/rc.local
+# create xterm demo script
+su $app_user -c "touch ~/kiosk/xterm_demo.sh"
+cat << 'EOF' > /home/$app_user/kiosk/xterm_demo.sh
 #!/bin/bash
+set -euo pipefail
 
-# Check if the first-boot script exists before executing
-if [ -x /usr/local/bin/first-boot.sh ]; then
-  echo "* Running first-boot.sh script"
-  /usr/local/bin/first-boot.sh
-  echo "* first-boot.sh script completed"
-else
-  echo "@ first-boot.sh script not found or not executable, skipping"
-fi
+# Optional: let the session settle a moment
+sleep 2
 
-# Check if the app-update script exists before executing
-if [ -x /usr/local/bin/app-update.sh ]; then
-  echo "* Running app-update.sh script"
-  /usr/local/bin/app-update.sh
-  echo "* app-update.sh script completed"
-else
-  echo "@ app-update.sh script not found or not executable, skipping"
-fi
-
-exit 0
+xterm -geometry 285x65+100+100 -xrm 'XTerm.vt100.allowTitleOps: false' -T "This is HDMI-1" & p1=$!
+xterm -geometry 285x65+2020+100 -xrm 'XTerm.vt100.allowTitleOps: false' -T "This is HDMI-2" & p2=$!
+wait "$p1" "p2"
 EOF
-chmod +x /etc/rc.local
+su $app_user -c "chmod +x ~/kiosk/xterm_demo.sh"
 
 # all done - countdown to reboot
 if [ $reboot -eq 1 ]; then
