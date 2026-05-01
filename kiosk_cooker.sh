@@ -35,6 +35,11 @@ if [ ! -v app_password ]; then
   app_password=raspberry
 fi
 
+# set default edid if it hasn't been specified
+if [ ! -v edid ]; then
+  edid=1080P-2CH
+fi
+
 # process command-line arguments
 for arg in "$@"; do
   case $arg in
@@ -54,10 +59,23 @@ for arg in "$@"; do
       demo=0
       shift
       ;;
+    --edid=*)
+      edid="${arg#*=}"
+      shift
+      ;;
     *)
       ;;
   esac
 done
+
+# download specified edid file (if any) before making any system changes
+if [ "$edid" != "none" ]; then
+  echo "* Downloading EDID file '${edid}.edid'..."
+  if ! wget -q "https://github.com/fasteddy516/pi-kiosk-cooker/raw/main/edid/${edid}.edid"; then
+    echo "! Failed to download EDID file '${edid}.edid' - aborting"
+    exit 1
+  fi
+fi
 
 # update installed packages
 apt update
@@ -82,9 +100,10 @@ raspi-config nonint do_blanking 1
 sed -i -e '/disable_splash=/d' -e '/hdmi_force_hotplug=/d' -e '${/^$/d;}' /boot/firmware/config.txt
 sed -i -e '$a disable_splash=1\nhdmi_force_hotplug=1\n' /boot/firmware/config.txt
 
-# retrieve 1080P+2CH audio raw EDID file
-wget "https://github.com/fasteddy516/pi-kiosk-cooker/raw/main/edid/1080P-2CH.edid"
-sudo mv ./1080P-2CH.edid /lib/firmware/1080P-2CH.edid
+# install edid file if specified
+if [ "$edid" != "none" ]; then
+  mv "./${edid}.edid" /lib/firmware/${edid}.edid
+fi
 
 # Read current cmdline configuration
 cmdline="$(cat /boot/firmware/cmdline.txt)"
@@ -112,10 +131,13 @@ cmdline="$(echo "$cmdline" | tr -s ' ' | sed -E 's/^ +| +$//g')"
 
 # Append our desired tokens exactly once
 cmdline="$cmdline loglevel=3 quiet logo.nologo plymouth.ignore-serial-consoles vt.global_cursor_default=0 \
-systemd.show_status=false fsck.repair=yes \
+systemd.show_status=false fsck.repair=yes"
+if [ "$edid" != "none" ]; then
+  cmdline="$cmdline \
 video=HDMI-A-1:1920x1080@60D video=HDMI-A-2:1920x1080@60D \
-drm.edid_firmware=HDMI-A-1:1080P-2CH.edid drm.edid_firmware=HDMI-A-2:1080P-2CH.edid \
+drm.edid_firmware=HDMI-A-1:${edid}.edid drm.edid_firmware=HDMI-A-2:${edid}.edid \
 vc4.force_hotplug=0x03"
+fi
 
 # write the updated cmdline back to the file
 echo "$cmdline" > /boot/firmware/cmdline.txt
