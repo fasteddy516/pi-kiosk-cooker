@@ -93,10 +93,9 @@ fi
 # update installed packages
 apt update
 apt full-upgrade -y
-apt install -y xserver-xorg x11-xserver-utils xinit xinput xterm openbox unclutter-xfixes x11-utils
+apt install -y labwc wlr-randr wayland-protocols xwayland dbus-user-session seatd xinput xterm x11-utils
 
-# remove packages that may interfere with xorg driver selection
-apt remove -y --purge xserver-xorg-video-fbdev xserver-xorg-video-all || true
+# remove orphaned packages
 apt autoremove -y
 
 # disable splash screen (1 = disabled)
@@ -174,68 +173,67 @@ else
   echo "User '$app_user' already exists"
 fi
 
-# create xorg configuration to force use of modesetting driver for vc4 and set it as primary GPU
-mkdir -p "/etc/X11/xorg.conf.d"
-cat << 'EOF' > /etc/X11/xorg.conf.d/99-vc4.conf
-Section "OutputClass"
-  Identifier "vc4"
-  MatchDriver "vc4"
-  Driver "modesetting"
-  Option "PrimaryGPU" "true"
-EndSection
-EOF
+app_uid=$(id -u "$app_user")
 
-# disable getty on tty1 to prevent interference with Xorg
+# disable getty on tty1 to prevent interference with the kiosk compositor session
 systemctl disable getty@tty1.service
 
-# create openbox autostart script
-su $app_user -c "mkdir ~/.config ; mkdir ~/.config/openbox ; touch ~/.config/openbox/autostart"
-cat << EOF >> /home/$app_user/.config/openbox/autostart
-# screen saver and power/sleep settings
-xset -dpms     # turn off display power management system
-xset s noblank # turn off screen blanking
-xset s off     # turn off screen saver
-
-# hide the X cursor even on touchscreen taps
-pkill -x unclutter >/dev/null 2>&1 || true
-unclutter --timeout 0 --jitter 5 --hide-on-touch --start-hidden &
-EOF
-
-# create xinitrc script to start openbox session
-su "$app_user" -c "mkdir -p ~/kiosk"
-cat << EOF > /home/$app_user/kiosk/xinitrc
+# create compositor/session startup files
+su "$app_user" -c "mkdir -p ~/.config ~/kiosk"
+loginctl enable-linger "$app_user" || true
+su "$app_user" -c "mkdir -p ~/.config/labwc"
+cat << EOF > /home/$app_user/.config/labwc/autostart
 #!/bin/sh
-exec openbox-session
 EOF
-chown $app_user:$app_user /home/$app_user/kiosk/xinitrc
-chmod +x /home/$app_user/kiosk/xinitrc
+chown $app_user:$app_user /home/$app_user/.config/labwc/autostart
+chmod +x /home/$app_user/.config/labwc/autostart
 
-# create wait-for-x-ready script to ensure X is ready before starting the kiosk application
-cat << 'EOF' > /usr/local/bin/wait-for-x-ready
+cat << EOF > /home/$app_user/kiosk/session_start.sh
+#!/bin/sh
+set -eu
+
+export XDG_RUNTIME_DIR="/run/user/$app_uid"
+export XDG_SESSION_TYPE="wayland"
+export XDG_CURRENT_DESKTOP="labwc"
+export WAYLAND_DISPLAY="wayland-0"
+export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$app_uid/bus"
+export MOZ_ENABLE_WAYLAND=1
+export QT_QPA_PLATFORM=wayland
+export GDK_BACKEND=wayland,x11
+export SDL_VIDEODRIVER=wayland
+
+exec labwc
+EOF
+chown $app_user:$app_user /home/$app_user/kiosk/session_start.sh
+chmod +x /home/$app_user/kiosk/session_start.sh
+
+# create wait-for-gui-ready script to ensure the compositor is ready before starting the kiosk application
+cat << EOF > /usr/local/bin/wait-for-gui-ready
 #!/usr/bin/env bash
 set -euo pipefail
-export DISPLAY=:0
+export XDG_RUNTIME_DIR="/run/user/$app_uid"
+export WAYLAND_DISPLAY="wayland-0"
 
-# Wait for X socket
-for _ in $(seq 1 300); do
-  [ -S "/tmp/.X11-unix/X0" ] && break
+for _ in \
+$(seq 1 300); do
+  [ -S "\$XDG_RUNTIME_DIR/\$WAYLAND_DISPLAY" ] && break
   sleep 0.1
 done
 
-# Wait for X to respond
-for _ in $(seq 1 300); do
-  if xdpyinfo >/dev/null 2>&1; then
+for _ in \
+$(seq 1 300); do
+  if wlr-randr >/dev/null 2>&1; then
     exit 0
   fi
   sleep 0.1
 done
 
-echo "X did not become ready in time" >&2
+echo "Wayland did not become ready in time" >&2
 exit 1
 EOF
-chmod +x /usr/local/bin/wait-for-x-ready
+chmod +x /usr/local/bin/wait-for-gui-ready
 
-# create kiosk-ui-init script to set up display layout with xrandr and ensure it’s applied correctly
+# create kiosk-ui-init script to set up display layout after the compositor is ready
 if [ "$edid" != "none" ]; then
   kiosk_force_mode=1
   kiosk_mode="1920x1080"
@@ -248,31 +246,19 @@ cat <<EOF | sudo tee /usr/local/bin/kiosk-ui-init >/dev/null
 #!/usr/bin/env bash
 set -euo pipefail
 
-export DISPLAY=":0"
 export HOME="/home/$app_user"
-export XAUTHORITY="/home/$app_user/.Xauthority"
+export XDG_RUNTIME_DIR="/run/user/$app_uid"
+export WAYLAND_DISPLAY="wayland-0"
 
 FORCE_MODE="$kiosk_force_mode"
 MODE="$kiosk_mode"
 NUM_DISPLAYS="$kiosk_num_displays"
 
-SOCKET_WAIT_SECS=20
-AUTH_WAIT_SECS=20
-XRANDR_WAIT_SECS=20
+WAIT_SECS=20
 APPLY_RETRIES=20
 APPLY_RETRY_DELAY_SECS=0.5
 
 log() { echo "kiosk-ui-init: \$*"; }
-
-wait_for_file() {
-  local path="\$1" secs="\$2"
-  local deadline=\$((SECONDS + secs))
-  while [ \$SECONDS -lt \$deadline ]; do
-    [ -e "\$path" ] && return 0
-    sleep 0.1
-  done
-  return 1
-}
 
 wait_for_socket() {
   local path="\$1" secs="\$2"
@@ -284,50 +270,26 @@ wait_for_socket() {
   return 1
 }
 
-xrandr_query() {
-  xrandr --query 2>/dev/null
+wayland_query() {
+  wlr-randr 2>/dev/null
 }
 
 pick_outputs() {
-  # Prefer KMS-style HDMI-A-* first, then HDMI-*
   local outs
-  outs="\$(xrandr_query | awk '/^HDMI-A-[0-9]+ /{print \$1} /^HDMI-[0-9]+ /{print \$1}' | head -n "\$NUM_DISPLAYS")"
+  outs="\$(wayland_query | awk '/^HDMI-A-[0-9]+ /{print \$1} /^HDMI-[0-9]+ /{print \$1}' | head -n "\$NUM_DISPLAYS")"
   echo "\$outs"
 }
 
-mode_is_current() {
-  local out="\$1"
-  xrandr_query | awk -v out="\$out" -v mode="\$MODE" '
-    \$1==out {inside=1; next}
-    inside && \$1 ~ /^[A-Z]/ {inside=0}
-    inside && \$1==mode && \$0 ~ /\*/ {ok=1}
-    END { exit !ok }
-  '
-}
-
 main() {
-  log "Waiting for X socket..."
-  if ! wait_for_socket "/tmp/.X11-unix/X0" "\$SOCKET_WAIT_SECS"; then
-    log "Timed out waiting for /tmp/.X11-unix/X0"
+  log "Waiting for Wayland socket..."
+  if ! wait_for_socket "\$XDG_RUNTIME_DIR/\$WAYLAND_DISPLAY" "\$WAIT_SECS"; then
+    log "Timed out waiting for \$XDG_RUNTIME_DIR/\$WAYLAND_DISPLAY"
     exit 1
   fi
 
-  log "Waiting for Xauthority..."
-  if ! wait_for_file "\$XAUTHORITY" "\$AUTH_WAIT_SECS"; then
-    log "Timed out waiting for \$XAUTHORITY"
-    ls -la /home/$app_user || true
-    exit 1
-  fi
-
-  log "Waiting for xrandr to respond..."
-  if ! wait_for_file "/usr/bin/xrandr" 1; then
-    log "xrandr not installed?"
-    exit 1
-  fi
-
-  local deadline=\$((SECONDS + XRANDR_WAIT_SECS))
+  local deadline=\$((SECONDS + WAIT_SECS))
   while [ \$SECONDS -lt \$deadline ]; do
-    if xrandr_query >/dev/null 2>&1; then
+    if wayland_query >/dev/null 2>&1; then
       break
     fi
     sleep 0.1
@@ -339,52 +301,40 @@ main() {
   out2="\$(echo "\$outs" | sed -n '2p')"
 
   if [ -z "\${out1:-}" ]; then
-    log "Could not find primary HDMI output via xrandr. Full xrandr output:"
-    xrandr --query || true
+    log "Could not find primary HDMI output via wlr-randr. Full output state:"
+    wayland_query || true
     exit 1
   fi
 
   if [ "\$NUM_DISPLAYS" -eq 2 ] && [ -z "\${out2:-}" ]; then
-    log "Could not find second HDMI output via xrandr. Full xrandr output:"
-    xrandr --query || true
+    log "Could not find second HDMI output via wlr-randr. Full output state:"
+    wayland_query || true
     exit 1
   fi
 
-  if [ "\$NUM_DISPLAYS" -eq 2 ]; then
-    log "Using outputs: \$out1 and \$out2"
-  else
-    log "Using output: \$out1"
-  fi
-
-  for i in \$(seq 1 "\$APPLY_RETRIES"); do
+  for _ in \$(seq 1 "\$APPLY_RETRIES"); do
     if [ "\$FORCE_MODE" -eq 1 ]; then
-      # Force modes/positions when EDID-driven mode is requested
       if [ "\$NUM_DISPLAYS" -eq 2 ]; then
-        xrandr \
-          --output "\$out1" --mode "\$MODE" --pos 0x0 --primary \
-          --output "\$out2" --mode "\$MODE" --right-of "\$out1" || true
-        if mode_is_current "\$out1" && mode_is_current "\$out2"; then
+        if wlr-randr --output "\$out1" --on --mode "\$MODE" --pos 0,0 \
+          && wlr-randr --output "\$out2" --on --mode "\$MODE" --pos 1920,0; then
           log "Layout applied successfully."
           exit 0
         fi
       else
-        xrandr --output "\$out1" --mode "\$MODE" --pos 0x0 --primary || true
-        if mode_is_current "\$out1"; then
+        if wlr-randr --output "\$out1" --on --mode "\$MODE" --pos 0,0; then
           log "Layout applied successfully."
           exit 0
         fi
       fi
     else
-      # No EDID mode enforcement: apply placement only
       if [ "\$NUM_DISPLAYS" -eq 2 ]; then
-        if xrandr \
-          --output "\$out1" --pos 0x0 --primary \
-          --output "\$out2" --right-of "\$out1"; then
+        if wlr-randr --output "\$out1" --on --pos 0,0 \
+          && wlr-randr --output "\$out2" --on; then
           log "Layout applied successfully."
           exit 0
         fi
       else
-        if xrandr --output "\$out1" --pos 0x0 --primary; then
+        if wlr-randr --output "\$out1" --on --pos 0,0; then
           log "Layout applied successfully."
           exit 0
         fi
@@ -394,20 +344,31 @@ main() {
     sleep "\$APPLY_RETRY_DELAY_SECS"
   done
 
-  log "Failed to apply/verify layout after retries. Current xrandr:"
-  xrandr --query || true
+  log "Failed to apply layout after retries. Current output state:"
+  wayland_query || true
   exit 1
 }
 
 main "\$@"
 EOF
 chmod +x /usr/local/bin/kiosk-ui-init
+session_env=$(cat <<EOF
+Environment=XDG_RUNTIME_DIR=/run/user/$app_uid
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=XDG_SESSION_TYPE=wayland
+Environment=XDG_CURRENT_DESKTOP=labwc
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$app_uid/bus
+EOF
+)
+session_exec="ExecStart=/home/$app_user/kiosk/session_start.sh"
+session_ready_desc="Wayland"
+ui_init_desc="wlr-randr"
 
-# add kiosk-x.service to startx on tty1 at boot
-cat << EOF > /etc/systemd/system/kiosk-x.service
+# add kiosk-session.service to start the graphical session on tty1 at boot
+cat << EOF > /etc/systemd/system/kiosk-session.service
 [Unit]
-Description=Kiosk X (startx) on tty1
-After=systemd-user-sessions.service
+Description=Kiosk graphical session on tty1
+After=systemd-user-sessions.service systemd-logind.service
 Wants=systemd-user-sessions.service
 
 [Service]
@@ -416,8 +377,7 @@ User=$app_user
 Group=$app_user
 WorkingDirectory=/home/$app_user
 Environment=HOME=/home/$app_user
-Environment=DISPLAY=:0
-Environment=XAUTHORITY=/home/$app_user/.Xauthority
+$session_env
 
 TTYPath=/dev/tty1
 TTYReset=yes
@@ -428,7 +388,7 @@ StandardOutput=journal
 StandardError=journal
 PAMName=login
 
-ExecStart=/usr/bin/startx /home/$app_user/kiosk/xinitrc -- :0 -nolisten tcp vt1
+$session_exec
 Restart=on-failure
 RestartSec=2
 
@@ -436,51 +396,50 @@ RestartSec=2
 WantedBy=multi-user.target
 EOF
 
-# create systemd target to signal when X is ready for the kiosk application to start
-cat << 'EOF' > /etc/systemd/system/kiosk-x-ready.target
+# create systemd target to signal when the graphical session is ready for the kiosk application to start
+cat << 'EOF' > /etc/systemd/system/kiosk-session-ready.target
 [Unit]
-Description=Kiosk X session is ready
+Description=Kiosk graphical session is ready
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# create systemd service to wait for X to be ready and then signal kiosk-x-ready.target
-cat << EOF > /etc/systemd/system/kiosk-x-ready.service
+# create systemd service to wait for the compositor to be ready and then signal kiosk-session-ready.target
+cat << EOF > /etc/systemd/system/kiosk-session-ready.service
 [Unit]
-Description=Wait for kiosk X to be ready
-After=kiosk-x.service
-Wants=kiosk-x.service
+Description=Wait for kiosk $session_ready_desc session to be ready
+After=kiosk-session.service
+Wants=kiosk-session.service
 
 [Service]
 Type=oneshot
 User=$app_user
 Group=$app_user
 Environment=HOME=/home/$app_user
-Environment=DISPLAY=:0
-Environment=XAUTHORITY=/home/$app_user/.Xauthority
-ExecStart=/usr/local/bin/wait-for-x-ready
+$session_env
+ExecStart=/usr/local/bin/wait-for-gui-ready
 RemainAfterExit=yes
 
 [Install]
-WantedBy=kiosk-x-ready.target
+WantedBy=kiosk-session-ready.target
 EOF
 
-# create systemd target to signal when the kiosk UI is fully ready (X + display layout applied) for the kiosk application to start
+# create systemd target to signal when the kiosk UI is fully ready for the kiosk application to start
 cat << 'EOF' > /etc/systemd/system/kiosk-ui-ready.target
 [Unit]
-Description=Kiosk UI is ready (X + display layout applied)
+Description=Kiosk UI is ready
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# create systemd service to set up display layout with xrandr after X is ready, and then signal kiosk-ui-ready.target
+# create systemd service to set up display layout after the graphical session is ready
 cat << EOF > /etc/systemd/system/kiosk-ui-init.service
 [Unit]
-Description=Initialize kiosk display layout (xrandr)
-Requires=kiosk-x-ready.target
-After=kiosk-x-ready.target
+Description=Initialize kiosk display layout ($ui_init_desc)
+Requires=kiosk-session-ready.target
+After=kiosk-session-ready.target
 
 [Service]
 Type=oneshot
@@ -488,16 +447,15 @@ User=$app_user
 Group=$app_user
 WorkingDirectory=/home/$app_user
 Environment=HOME=/home/$app_user
-Environment=DISPLAY=:0
-Environment=XAUTHORITY=/home/$app_user/.Xauthority
+$session_env
 ExecStart=/usr/local/bin/kiosk-ui-init
 RemainAfterExit=yes
 
 [Install]
-WantedBy=kiosk-ui-ready.target
+WantedBy=multi-user.target
 EOF
 
-# create xterm demo service to run a demo application after X is ready (if demo mode is enabled)
+# create xterm demo service to run a demo application after the UI is ready (if demo mode is enabled)
 cat << EOF > /etc/systemd/system/xterm-demo.service
 [Unit]
 Description=XTerm demo (kiosk install verification)
@@ -510,8 +468,8 @@ User=$app_user
 Group=$app_user
 WorkingDirectory=/home/$app_user
 Environment=HOME=/home/$app_user
+$session_env
 Environment=DISPLAY=:0
-Environment=XAUTHORITY=/home/$app_user/.Xauthority
 ExecStart=/home/$app_user/kiosk/xterm_demo.sh
 Restart=on-failure
 RestartSec=2
@@ -522,10 +480,10 @@ EOF
 
 # finish setting up systemd services and targets
 systemctl daemon-reload
-systemctl enable kiosk-x.service
+systemctl enable kiosk-session.service
 systemctl enable kiosk-ui-ready.target
 systemctl enable kiosk-ui-init.service
-systemctl enable kiosk-x-ready.target
+systemctl enable kiosk-session-ready.target
 if [ $demo -eq 1 ]; then
   systemctl enable xterm-demo.service
 fi
