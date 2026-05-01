@@ -450,7 +450,7 @@ sleep 2
 
 xterm -geometry 285x65+100+100 -xrm 'XTerm.vt100.allowTitleOps: false' -T "This is HDMI-1" & p1=$!
 xterm -geometry 285x65+2020+100 -xrm 'XTerm.vt100.allowTitleOps: false' -T "This is HDMI-2" & p2=$!
-wait "$p1" "p2"
+wait "$p1" "$p2"
 EOF
 su $app_user -c "chmod +x ~/kiosk/xterm_demo.sh"
 
