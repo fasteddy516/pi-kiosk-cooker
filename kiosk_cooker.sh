@@ -35,6 +35,11 @@ if [ ! -v app_password ]; then
   app_password=raspberry
 fi
 
+# set default edid if it hasn't been specified
+if [ ! -v edid ]; then
+  edid=1080P-2CH
+fi
+
 # process command-line arguments
 for arg in "$@"; do
   case $arg in
@@ -54,10 +59,23 @@ for arg in "$@"; do
       demo=0
       shift
       ;;
+    --edid=*)
+      edid="${arg#*=}"
+      shift
+      ;;
     *)
       ;;
   esac
 done
+
+# download specified edid file (if any) before making any system changes
+if [ "$edid" != "none" ]; then
+  echo "* Downloading EDID file '${edid}.edid'..."
+  if ! wget -q "https://github.com/fasteddy516/pi-kiosk-cooker/raw/main/edid/${edid}.edid"; then
+    echo "! Failed to download EDID file '${edid}.edid' - aborting"
+    exit 1
+  fi
+fi
 
 # update installed packages
 apt update
@@ -82,9 +100,10 @@ raspi-config nonint do_blanking 1
 sed -i -e '/disable_splash=/d' -e '/hdmi_force_hotplug=/d' -e '${/^$/d;}' /boot/firmware/config.txt
 sed -i -e '$a disable_splash=1\nhdmi_force_hotplug=1\n' /boot/firmware/config.txt
 
-# retrieve 1080P+2CH audio raw EDID file
-wget "https://github.com/fasteddy516/pi-kiosk-cooker/raw/main/edid/1080P-2CH.edid"
-sudo mv ./1080P-2CH.edid /lib/firmware/1080P-2CH.edid
+# install edid file if specified
+if [ "$edid" != "none" ]; then
+  mv "./${edid}.edid" /lib/firmware/${edid}.edid
+fi
 
 # Read current cmdline configuration
 cmdline="$(cat /boot/firmware/cmdline.txt)"
@@ -112,10 +131,13 @@ cmdline="$(echo "$cmdline" | tr -s ' ' | sed -E 's/^ +| +$//g')"
 
 # Append our desired tokens exactly once
 cmdline="$cmdline loglevel=3 quiet logo.nologo plymouth.ignore-serial-consoles vt.global_cursor_default=0 \
-systemd.show_status=false fsck.repair=yes \
+systemd.show_status=false fsck.repair=yes"
+if [ "$edid" != "none" ]; then
+  cmdline="$cmdline \
 video=HDMI-A-1:1920x1080@60D video=HDMI-A-2:1920x1080@60D \
-drm.edid_firmware=HDMI-A-1:1080P-2CH.edid drm.edid_firmware=HDMI-A-2:1080P-2CH.edid \
+drm.edid_firmware=HDMI-A-1:${edid}.edid drm.edid_firmware=HDMI-A-2:${edid}.edid \
 vc4.force_hotplug=0x03"
+fi
 
 # write the updated cmdline back to the file
 echo "$cmdline" > /boot/firmware/cmdline.txt
@@ -188,6 +210,13 @@ EOF
 chmod +x /usr/local/bin/wait-for-x-ready
 
 # create kiosk-ui-init script to set up display layout with xrandr and ensure it’s applied correctly
+if [ "$edid" != "none" ]; then
+  kiosk_force_mode=1
+  kiosk_mode="1920x1080"
+else
+  kiosk_force_mode=0
+  kiosk_mode=""
+fi
 cat <<EOF | sudo tee /usr/local/bin/kiosk-ui-init >/dev/null
 #!/usr/bin/env bash
 set -euo pipefail
@@ -196,8 +225,8 @@ export DISPLAY=":0"
 export HOME="/home/$app_user"
 export XAUTHORITY="/home/$app_user/.Xauthority"
 
-# Target mode(s)
-MODE="1920x1080"
+FORCE_MODE="$kiosk_force_mode"
+MODE="$kiosk_mode"
 
 SOCKET_WAIT_SECS=20
 AUTH_WAIT_SECS=20
@@ -290,14 +319,24 @@ main() {
   log "Using outputs: \$out1 and \$out2"
 
   for i in \$(seq 1 "\$APPLY_RETRIES"); do
-    # Force modes/positions; don't require 'connected'
-    xrandr \
-      --output "\$out1" --mode "\$MODE" --pos 0x0 --primary \
-      --output "\$out2" --mode "\$MODE" --right-of "\$out1" || true
+    if [ "\$FORCE_MODE" -eq 1 ]; then
+      # Force modes/positions when EDID-driven mode is requested
+      xrandr \
+        --output "\$out1" --mode "\$MODE" --pos 0x0 --primary \
+        --output "\$out2" --mode "\$MODE" --right-of "\$out1" || true
 
-    if mode_is_current "\$out1" && mode_is_current "\$out2"; then
-      log "Layout applied successfully."
-      exit 0
+      if mode_is_current "\$out1" && mode_is_current "\$out2"; then
+        log "Layout applied successfully."
+        exit 0
+      fi
+    else
+      # No EDID mode enforcement: apply placement only
+      if xrandr \
+        --output "\$out1" --pos 0x0 --primary \
+        --output "\$out2" --right-of "\$out1"; then
+        log "Layout applied successfully."
+        exit 0
+      fi
     fi
 
     sleep "\$APPLY_RETRY_DELAY_SECS"
@@ -450,7 +489,7 @@ sleep 2
 
 xterm -geometry 285x65+100+100 -xrm 'XTerm.vt100.allowTitleOps: false' -T "This is HDMI-1" & p1=$!
 xterm -geometry 285x65+2020+100 -xrm 'XTerm.vt100.allowTitleOps: false' -T "This is HDMI-2" & p2=$!
-wait "$p1" "p2"
+wait "$p1" "$p2"
 EOF
 su $app_user -c "chmod +x ~/kiosk/xterm_demo.sh"
 
