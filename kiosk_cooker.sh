@@ -210,6 +210,13 @@ EOF
 chmod +x /usr/local/bin/wait-for-x-ready
 
 # create kiosk-ui-init script to set up display layout with xrandr and ensure it’s applied correctly
+if [ "$edid" != "none" ]; then
+  kiosk_force_mode=1
+  kiosk_mode="1920x1080"
+else
+  kiosk_force_mode=0
+  kiosk_mode=""
+fi
 cat <<EOF | sudo tee /usr/local/bin/kiosk-ui-init >/dev/null
 #!/usr/bin/env bash
 set -euo pipefail
@@ -218,8 +225,8 @@ export DISPLAY=":0"
 export HOME="/home/$app_user"
 export XAUTHORITY="/home/$app_user/.Xauthority"
 
-# Target mode(s)
-MODE="1920x1080"
+FORCE_MODE="$kiosk_force_mode"
+MODE="$kiosk_mode"
 
 SOCKET_WAIT_SECS=20
 AUTH_WAIT_SECS=20
@@ -312,14 +319,24 @@ main() {
   log "Using outputs: \$out1 and \$out2"
 
   for i in \$(seq 1 "\$APPLY_RETRIES"); do
-    # Force modes/positions; don't require 'connected'
-    xrandr \
-      --output "\$out1" --mode "\$MODE" --pos 0x0 --primary \
-      --output "\$out2" --mode "\$MODE" --right-of "\$out1" || true
+    if [ "\$FORCE_MODE" -eq 1 ]; then
+      # Force modes/positions when EDID-driven mode is requested
+      xrandr \
+        --output "\$out1" --mode "\$MODE" --pos 0x0 --primary \
+        --output "\$out2" --mode "\$MODE" --right-of "\$out1" || true
 
-    if mode_is_current "\$out1" && mode_is_current "\$out2"; then
-      log "Layout applied successfully."
-      exit 0
+      if mode_is_current "\$out1" && mode_is_current "\$out2"; then
+        log "Layout applied successfully."
+        exit 0
+      fi
+    else
+      # No EDID mode enforcement: apply placement only
+      if xrandr \
+        --output "\$out1" --pos 0x0 --primary \
+        --output "\$out2" --right-of "\$out1"; then
+        log "Layout applied successfully."
+        exit 0
+      fi
     fi
 
     sleep "\$APPLY_RETRY_DELAY_SECS"
