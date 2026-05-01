@@ -40,6 +40,11 @@ if [ ! -v edid ]; then
   edid=1080P-2CH
 fi
 
+# set default number of displays if it hasn't been specified
+if [ ! -v displays ]; then
+  displays=2
+fi
+
 # process command-line arguments
 for arg in "$@"; do
   case $arg in
@@ -61,6 +66,14 @@ for arg in "$@"; do
       ;;
     --edid=*)
       edid="${arg#*=}"
+      shift
+      ;;
+    --displays=*)
+      displays="${arg#*=}"
+      if [ "$displays" != "1" ] && [ "$displays" != "2" ]; then
+        echo "! Invalid value for --displays: '$displays' (must be 1 or 2)"
+        exit 1
+      fi
       shift
       ;;
     *)
@@ -89,9 +102,11 @@ apt autoremove -y
 # disable splash screen (1 = disabled)
 raspi-config nonint do_boot_splash 1
 
-# disable overscan for both hdmi outputs
+# disable overscan for active hdmi outputs
 raspi-config nonint do_overscan_kms 1 1
-raspi-config nonint do_overscan_kms 2 1
+if [ $displays -eq 2 ]; then
+  raspi-config nonint do_overscan_kms 2 1
+fi
 
 # disable screen blanking
 raspi-config nonint do_blanking 1
@@ -133,10 +148,17 @@ cmdline="$(echo "$cmdline" | tr -s ' ' | sed -E 's/^ +| +$//g')"
 cmdline="$cmdline loglevel=3 quiet logo.nologo plymouth.ignore-serial-consoles vt.global_cursor_default=0 \
 systemd.show_status=false fsck.repair=yes"
 if [ "$edid" != "none" ]; then
-  cmdline="$cmdline \
+  if [ "$displays" -eq 2 ]; then
+    cmdline="$cmdline \
 video=HDMI-A-1:1920x1080@60D video=HDMI-A-2:1920x1080@60D \
 drm.edid_firmware=HDMI-A-1:${edid}.edid drm.edid_firmware=HDMI-A-2:${edid}.edid \
 vc4.force_hotplug=0x03"
+  else
+    cmdline="$cmdline \
+video=HDMI-A-1:1920x1080@60D \
+drm.edid_firmware=HDMI-A-1:${edid}.edid \
+vc4.force_hotplug=0x01"
+  fi
 fi
 
 # write the updated cmdline back to the file
@@ -217,6 +239,7 @@ else
   kiosk_force_mode=0
   kiosk_mode=""
 fi
+kiosk_num_displays=$displays
 cat <<EOF | sudo tee /usr/local/bin/kiosk-ui-init >/dev/null
 #!/usr/bin/env bash
 set -euo pipefail
@@ -227,6 +250,7 @@ export XAUTHORITY="/home/$app_user/.Xauthority"
 
 FORCE_MODE="$kiosk_force_mode"
 MODE="$kiosk_mode"
+NUM_DISPLAYS="$kiosk_num_displays"
 
 SOCKET_WAIT_SECS=20
 AUTH_WAIT_SECS=20
@@ -263,7 +287,7 @@ xrandr_query() {
 pick_outputs() {
   # Prefer KMS-style HDMI-A-* first, then HDMI-*
   local outs
-  outs="\$(xrandr_query | awk '/^HDMI-A-[0-9]+ /{print \$1} /^HDMI-[0-9]+ /{print \$1}' | head -n 2)"
+  outs="\$(xrandr_query | awk '/^HDMI-A-[0-9]+ /{print \$1} /^HDMI-[0-9]+ /{print \$1}' | head -n "\$NUM_DISPLAYS")"
   echo "\$outs"
 }
 
@@ -310,32 +334,56 @@ main() {
   out1="\$(echo "\$outs" | sed -n '1p')"
   out2="\$(echo "\$outs" | sed -n '2p')"
 
-  if [ -z "\${out1:-}" ] || [ -z "\${out2:-}" ]; then
-    log "Could not find two HDMI outputs via xrandr. Full xrandr output:"
+  if [ -z "\${out1:-}" ]; then
+    log "Could not find primary HDMI output via xrandr. Full xrandr output:"
     xrandr --query || true
     exit 1
   fi
 
-  log "Using outputs: \$out1 and \$out2"
+  if [ "\$NUM_DISPLAYS" -eq 2 ] && [ -z "\${out2:-}" ]; then
+    log "Could not find second HDMI output via xrandr. Full xrandr output:"
+    xrandr --query || true
+    exit 1
+  fi
+
+  if [ "\$NUM_DISPLAYS" -eq 2 ]; then
+    log "Using outputs: \$out1 and \$out2"
+  else
+    log "Using output: \$out1"
+  fi
 
   for i in \$(seq 1 "\$APPLY_RETRIES"); do
     if [ "\$FORCE_MODE" -eq 1 ]; then
       # Force modes/positions when EDID-driven mode is requested
-      xrandr \
-        --output "\$out1" --mode "\$MODE" --pos 0x0 --primary \
-        --output "\$out2" --mode "\$MODE" --right-of "\$out1" || true
-
-      if mode_is_current "\$out1" && mode_is_current "\$out2"; then
-        log "Layout applied successfully."
-        exit 0
+      if [ "\$NUM_DISPLAYS" -eq 2 ]; then
+        xrandr \
+          --output "\$out1" --mode "\$MODE" --pos 0x0 --primary \
+          --output "\$out2" --mode "\$MODE" --right-of "\$out1" || true
+        if mode_is_current "\$out1" && mode_is_current "\$out2"; then
+          log "Layout applied successfully."
+          exit 0
+        fi
+      else
+        xrandr --output "\$out1" --mode "\$MODE" --pos 0x0 --primary || true
+        if mode_is_current "\$out1"; then
+          log "Layout applied successfully."
+          exit 0
+        fi
       fi
     else
       # No EDID mode enforcement: apply placement only
-      if xrandr \
-        --output "\$out1" --pos 0x0 --primary \
-        --output "\$out2" --right-of "\$out1"; then
-        log "Layout applied successfully."
-        exit 0
+      if [ "\$NUM_DISPLAYS" -eq 2 ]; then
+        if xrandr \
+          --output "\$out1" --pos 0x0 --primary \
+          --output "\$out2" --right-of "\$out1"; then
+          log "Layout applied successfully."
+          exit 0
+        fi
+      else
+        if xrandr --output "\$out1" --pos 0x0 --primary; then
+          log "Layout applied successfully."
+          exit 0
+        fi
       fi
     fi
 
@@ -480,16 +528,20 @@ fi
 
 # create xterm demo script
 su $app_user -c "touch ~/kiosk/xterm_demo.sh"
-cat << 'EOF' > /home/$app_user/kiosk/xterm_demo.sh
+cat << EOF > /home/$app_user/kiosk/xterm_demo.sh
 #!/bin/bash
 set -euo pipefail
 
 # Optional: let the session settle a moment
 sleep 2
 
-xterm -geometry 285x65+100+100 -xrm 'XTerm.vt100.allowTitleOps: false' -T "This is HDMI-1" & p1=$!
-xterm -geometry 285x65+2020+100 -xrm 'XTerm.vt100.allowTitleOps: false' -T "This is HDMI-2" & p2=$!
-wait "$p1" "$p2"
+xterm -geometry 285x65+100+100 -xrm 'XTerm.vt100.allowTitleOps: false' -T "This is HDMI-1" & p1=\$!
+if [ $displays -eq 2 ]; then
+  xterm -geometry 285x65+2020+100 -xrm 'XTerm.vt100.allowTitleOps: false' -T "This is HDMI-2" & p2=\$!
+  wait "\$p1" "\$p2"
+else
+  wait "\$p1"
+fi
 EOF
 su $app_user -c "chmod +x ~/kiosk/xterm_demo.sh"
 
