@@ -27,3 +27,6 @@ chmod +x kiosk_cooker.sh
 `--no-reboot` disables the automatic reboot at the end of the script.  Useful when chaining this script into another application's install script.
 
 `--no-demo` disables the default kiosk "application" this script installs (`xterm_demo.service`).  Again, useful when chaining into another application's install script.
+
+## Cursor behavior
+The script installs `unclutter-xfixes` and starts it from the Openbox autostart file with `--start-hidden --hide-on-touch`.  That keeps the X cursor hidden by default and re-hides it after touchscreen interaction, which is usually more reliable than the older `unclutter` package on kiosk systems with USB touch panels.

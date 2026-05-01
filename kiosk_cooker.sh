@@ -93,7 +93,7 @@ fi
 # update installed packages
 apt update
 apt full-upgrade -y
-apt install -y xserver-xorg x11-xserver-utils xinit xinput xterm openbox unclutter x11-utils
+apt install -y xserver-xorg x11-xserver-utils xinit xinput xterm openbox unclutter-xfixes x11-utils
 
 # remove packages that may interfere with xorg driver selection
 apt remove -y --purge xserver-xorg-video-fbdev xserver-xorg-video-all || true
@@ -195,6 +195,10 @@ cat << EOF >> /home/$app_user/.config/openbox/autostart
 xset -dpms     # turn off display power management system
 xset s noblank # turn off screen blanking
 xset s off     # turn off screen saver
+
+# hide the X cursor even on touchscreen taps
+pkill -x unclutter >/dev/null 2>&1 || true
+unclutter --timeout 0 --jitter 5 --hide-on-touch --start-hidden &
 EOF
 
 # create xinitrc script to start openbox session
