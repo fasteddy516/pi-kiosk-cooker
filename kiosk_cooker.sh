@@ -210,13 +210,17 @@ export XDG_RUNTIME_DIR="/run/user/$app_uid"
 export XDG_SESSION_TYPE="wayland"
 export XDG_CURRENT_DESKTOP="labwc"
 export WAYLAND_DISPLAY="wayland-0"
-export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$app_uid/bus"
+export LIBSEAT_BACKEND="seatd"
 export MOZ_ENABLE_WAYLAND=1
 export QT_QPA_PLATFORM=wayland
 export GDK_BACKEND=wayland,x11
 export SDL_VIDEODRIVER=wayland
 
-exec labwc
+# Ensure runtime dir exists when running from a system service context.
+mkdir -p "$XDG_RUNTIME_DIR"
+chmod 700 "$XDG_RUNTIME_DIR"
+
+exec dbus-run-session -- labwc
 EOF
 chown $app_user:$app_user /home/$app_user/kiosk/session_start.sh
 chmod +x /home/$app_user/kiosk/session_start.sh
@@ -228,14 +232,12 @@ set -euo pipefail
 export XDG_RUNTIME_DIR="/run/user/$app_uid"
 export WAYLAND_DISPLAY="wayland-0"
 
-for _ in \
-$(seq 1 300); do
+for _ in {1..300}; do
   [ -S "\$XDG_RUNTIME_DIR/\$WAYLAND_DISPLAY" ] && break
   sleep 0.1
 done
 
-for _ in \
-$(seq 1 300); do
+for _ in {1..300}; do
   if wlr-randr >/dev/null 2>&1; then
     exit 0
   fi
@@ -371,7 +373,6 @@ Environment=XDG_RUNTIME_DIR=/run/user/$app_uid
 Environment=WAYLAND_DISPLAY=wayland-0
 Environment=XDG_SESSION_TYPE=wayland
 Environment=XDG_CURRENT_DESKTOP=labwc
-Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$app_uid/bus
 EOF
 )
 session_exec="ExecStart=/home/$app_user/kiosk/session_start.sh"
@@ -410,21 +411,12 @@ RestartSec=2
 WantedBy=multi-user.target
 EOF
 
-# create systemd target to signal when the graphical session is ready for the kiosk application to start
-cat << 'EOF' > /etc/systemd/system/kiosk-session-ready.target
-[Unit]
-Description=Kiosk graphical session is ready
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# create systemd service to wait for the compositor to be ready and then signal kiosk-session-ready.target
+# create systemd service to wait for the compositor session to become ready
 cat << EOF > /etc/systemd/system/kiosk-session-ready.service
 [Unit]
 Description=Wait for kiosk $session_ready_desc session to be ready
+Requires=kiosk-session.service
 After=kiosk-session.service
-Wants=kiosk-session.service
 
 [Service]
 Type=oneshot
@@ -436,24 +428,15 @@ ExecStart=/usr/local/bin/wait-for-gui-ready
 RemainAfterExit=yes
 
 [Install]
-WantedBy=kiosk-session-ready.target
-EOF
-
-# create systemd target to signal when the kiosk UI is fully ready for the kiosk application to start
-cat << 'EOF' > /etc/systemd/system/kiosk-ui-ready.target
-[Unit]
-Description=Kiosk UI is ready
-
-[Install]
 WantedBy=multi-user.target
 EOF
 
-# create systemd service to set up display layout after the graphical session is ready
+# create systemd service to set up display layout after the session is ready
 cat << EOF > /etc/systemd/system/kiosk-ui-init.service
 [Unit]
 Description=Initialize kiosk display layout ($ui_init_desc)
-Requires=kiosk-session-ready.target
-After=kiosk-session-ready.target
+Requires=kiosk-session-ready.service
+After=kiosk-session-ready.service
 
 [Service]
 Type=oneshot
@@ -466,15 +449,15 @@ ExecStart=/usr/local/bin/kiosk-ui-init
 RemainAfterExit=yes
 
 [Install]
-WantedBy=kiosk-ui-ready.target
+WantedBy=multi-user.target
 EOF
 
 # create xterm demo service to run a demo application after the UI is ready (if demo mode is enabled)
 cat << EOF > /etc/systemd/system/xterm-demo.service
 [Unit]
 Description=XTerm demo (kiosk install verification)
-Requires=kiosk-ui-ready.target
-After=kiosk-ui-ready.target
+Requires=kiosk-ui-init.service
+After=kiosk-ui-init.service
 
 [Service]
 Type=simple
@@ -493,11 +476,11 @@ EOF
 
 # finish setting up systemd services and targets
 systemctl daemon-reload
+systemctl disable kiosk-session-ready.target >/dev/null 2>&1 || true
+systemctl disable kiosk-ui-ready.target >/dev/null 2>&1 || true
 systemctl enable kiosk-session.service
 systemctl enable kiosk-session-ready.service
-systemctl enable kiosk-session-ready.target
 systemctl enable kiosk-ui-init.service
-systemctl enable kiosk-ui-ready.target
 if [ $demo -eq 1 ]; then
   systemctl enable xterm-demo.service
 fi
