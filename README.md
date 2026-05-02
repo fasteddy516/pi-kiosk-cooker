@@ -30,9 +30,21 @@ chmod +x kiosk_cooker.sh
 
 `--rpi-connect` installs full Raspberry Pi Connect (`rpi-connect`) and enables its user services globally so both remote shell and screen sharing are available.
 
+`--edid=<name>` sets the EDID profile to use for the display(s).  Defaults to `1080P-2CH`.  Use `--edid=none` to skip EDID configuration entirely.
+
+`--displays=<1|2>` sets the number of HDMI displays to configure.  Defaults to `2`.
+
+`--remember` saves all other arguments provided on this run to a `kiosk_cooker.memory` file next to the script.  On subsequent runs, those saved arguments are automatically prepended to the command line so you don't have to repeat them.  Explicitly provided arguments always override saved ones.  Delete `kiosk_cooker.memory` to clear the saved arguments.
+
+> **Warning:** Any password passed via `--password` will be stored as plaintext in `kiosk_cooker.memory`.  Avoid using `--remember` together with `--password` in security-sensitive environments, or delete the memory file once the password is no longer needed.
+
 ## Raspberry Pi Connect
-This script now uses a Wayland/labwc kiosk session by default so it is compatible with full Raspberry Pi Connect screen sharing when `rpi-connect` is installed.
+This script uses a Wayland/labwc kiosk session, which is compatible with full Raspberry Pi Connect screen sharing when `rpi-connect` is installed.  (Previous versions of this script used an X11/Openbox session, which does not support RPi Connect screen sharing.) 
 
 If you pass `--rpi-connect`, the script installs full Connect (not lite) and enables `rpi-connect.service` and `rpi-connect-wayvnc.service` at the global user level.
 
-Account linking/sign-in still remains a separate step.
+Account linking requires a one-time sign-in after installation.  Because screen sharing runs under the kiosk application user, sign-in must be performed as that user — not as a separate admin account.  The easiest way to do this is via a Raspberry Pi Connect remote shell session:
+
+1. After the Pi reboots, open a remote shell to the Pi and log in as the kiosk application user (the value passed to `--user`).
+2. Run `rpi-connect signin` and follow the URL it prints to authorize the device with your Raspberry Pi ID.
+3. Once authorized, screen sharing will be available through Raspberry Pi Connect.
