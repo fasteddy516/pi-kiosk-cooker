@@ -237,10 +237,23 @@ if [ $rpi_connect -eq 1 ]; then
   if [ -f /usr/lib/systemd/user/rpi-connect-wayvnc.service ]; then
     systemctl --global enable rpi-connect-wayvnc.service
   fi
+  labwc_connect_autostart=$(cat <<'EOF'
+
+# Keep user systemd/dbus environment aligned with this Wayland session.
+systemctl --user import-environment WAYLAND_DISPLAY XDG_RUNTIME_DIR XDG_SESSION_TYPE XDG_CURRENT_DESKTOP
+dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_RUNTIME_DIR XDG_SESSION_TYPE XDG_CURRENT_DESKTOP
+
+# Restart screen-sharing backend now that Wayland env is present.
+systemctl --user restart rpi-connect-wayvnc.service >/dev/null 2>&1 || true
+EOF
+)
+else
+  labwc_connect_autostart=""
 fi
 su "$app_user" -c "mkdir -p ~/.config/labwc"
 cat << EOF > /home/$app_user/.config/labwc/autostart
 #!/bin/sh
+$labwc_connect_autostart
 EOF
 chown $app_user:$app_user /home/$app_user/.config/labwc/autostart
 chmod +x /home/$app_user/.config/labwc/autostart
@@ -522,6 +535,14 @@ RestartSec=2
 WantedBy=multi-user.target
 EOF
 
+# suppress e2fsck console output during boot (output still goes to journal)
+mkdir -p /etc/systemd/system/systemd-fsck@.service.d
+cat << EOF > /etc/systemd/system/systemd-fsck@.service.d/silent.conf
+[Service]
+StandardOutput=null
+StandardError=null
+EOF
+
 # finish setting up systemd services and targets
 systemctl daemon-reload
 systemctl disable kiosk-session-ready.target >/dev/null 2>&1 || true
@@ -557,6 +578,17 @@ else
 fi
 EOF
 su $app_user -c "chmod +x ~/kiosk/xterm_demo.sh"
+
+# remind about rpi-connect signin if applicable
+if [ $rpi_connect -eq 1 ]; then
+  echo ""
+  echo "*** IMPORTANT: Raspberry Pi Connect requires a one-time sign-in to link this"
+  echo "    device to your Raspberry Pi ID.  Run the following command and visit the"
+  echo "    URL it displays to authorize this device:"
+  echo ""
+  echo "    sudo -u $app_user rpi-connect signin"
+  echo ""
+fi
 
 # all done - countdown to reboot
 if [ $reboot -eq 1 ]; then
