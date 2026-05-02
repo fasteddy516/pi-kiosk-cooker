@@ -488,6 +488,8 @@ systemctl enable kiosk-session-ready.service
 systemctl enable kiosk-ui-init.service
 if [ $demo -eq 1 ]; then
   systemctl enable xterm-demo.service
+else
+  systemctl disable --now xterm-demo.service >/dev/null 2>&1 || true
 fi
 
 # create xterm demo script
