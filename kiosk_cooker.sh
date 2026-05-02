@@ -164,6 +164,7 @@ cmdline="$(echo "$cmdline" \
     -e 's/(^| )logo\.nologo//g' \
     -e 's/(^| )plymouth\.ignore-serial-consoles//g' \
     -e 's/(^| )vt\.global_cursor_default=[^ ]+//g' \
+    -e 's/(^| )console=tty[0-9]+//g' \
     -e 's/(^| )video=HDMI-A-1:[^ ]+//g' \
     -e 's/(^| )video=HDMI-A-2:[^ ]+//g' \
     -e 's/(^| )drm\.edid_firmware=HDMI-A-1:[^ ]+//g' \
@@ -179,7 +180,7 @@ cmdline="$(echo "$cmdline" | tr -s ' ' | sed -E 's/^ +| +$//g')"
 
 # Append our desired tokens exactly once
 cmdline="$cmdline loglevel=3 quiet logo.nologo plymouth.ignore-serial-consoles vt.global_cursor_default=0 \
-systemd.show_status=false fsck.repair=yes"
+systemd.show_status=false fsck.repair=yes console=tty3"
 if [ "$edid" != "none" ]; then
   if [ "$displays" -eq 2 ]; then
     cmdline="$cmdline \
@@ -533,14 +534,6 @@ RestartSec=2
 
 [Install]
 WantedBy=multi-user.target
-EOF
-
-# suppress e2fsck console output during boot (output still goes to journal)
-mkdir -p /etc/systemd/system/systemd-fsck@.service.d
-cat << EOF > /etc/systemd/system/systemd-fsck@.service.d/silent.conf
-[Service]
-StandardOutput=null
-StandardError=null
 EOF
 
 # finish setting up systemd services and targets
