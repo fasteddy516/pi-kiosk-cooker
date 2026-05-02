@@ -168,12 +168,26 @@ grep "^$app_user:" /etc/passwd > /dev/null
 if [ $? -ne 0 ]; then
   echo "User '$app_user' does not exist and will be created"
   useradd -s /bin/bash -p "$(openssl passwd -6 $app_password)" $app_user --create-home
-  usermod -aG video,render $app_user
 else  
   echo "User '$app_user' already exists"
 fi
 
+# add kiosk user to required supplemental groups that exist on this OS
+desired_groups="video render input seat"
+available_groups=""
+for group_name in $desired_groups; do
+  if getent group "$group_name" > /dev/null 2>&1; then
+    available_groups="${available_groups:+$available_groups,}$group_name"
+  fi
+done
+if [ -n "$available_groups" ]; then
+  usermod -aG "$available_groups" "$app_user"
+fi
+
 app_uid=$(id -u "$app_user")
+
+# enable seatd for Wayland compositor seat management
+systemctl enable seatd
 
 # disable getty on tty1 to prevent interference with the kiosk compositor session
 systemctl disable getty@tty1.service
@@ -368,7 +382,7 @@ ui_init_desc="wlr-randr"
 cat << EOF > /etc/systemd/system/kiosk-session.service
 [Unit]
 Description=Kiosk graphical session on tty1
-After=systemd-user-sessions.service systemd-logind.service
+After=systemd-user-sessions.service systemd-logind.service seatd.service
 Wants=systemd-user-sessions.service
 
 [Service]
@@ -452,7 +466,7 @@ ExecStart=/usr/local/bin/kiosk-ui-init
 RemainAfterExit=yes
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=kiosk-ui-ready.target
 EOF
 
 # create xterm demo service to run a demo application after the UI is ready (if demo mode is enabled)
@@ -469,7 +483,6 @@ Group=$app_user
 WorkingDirectory=/home/$app_user
 Environment=HOME=/home/$app_user
 $session_env
-Environment=DISPLAY=:0
 ExecStart=/home/$app_user/kiosk/xterm_demo.sh
 Restart=on-failure
 RestartSec=2
@@ -481,9 +494,10 @@ EOF
 # finish setting up systemd services and targets
 systemctl daemon-reload
 systemctl enable kiosk-session.service
-systemctl enable kiosk-ui-ready.target
-systemctl enable kiosk-ui-init.service
+systemctl enable kiosk-session-ready.service
 systemctl enable kiosk-session-ready.target
+systemctl enable kiosk-ui-init.service
+systemctl enable kiosk-ui-ready.target
 if [ $demo -eq 1 ]; then
   systemctl enable xterm-demo.service
 fi
@@ -494,8 +508,12 @@ cat << EOF > /home/$app_user/kiosk/xterm_demo.sh
 #!/bin/bash
 set -euo pipefail
 
-# Optional: let the session settle a moment
-sleep 2
+# Wait for XWayland socket (labwc starts it on first X11 client connection)
+for _xi in $(seq 1 150); do
+  [ -S "/tmp/.X11-unix/X0" ] && break
+  sleep 0.2
+done
+export DISPLAY=:0
 
 xterm -geometry 285x65+100+100 -xrm 'XTerm.vt100.allowTitleOps: false' -T "This is HDMI-1" & p1=\$!
 if [ $displays -eq 2 ]; then
