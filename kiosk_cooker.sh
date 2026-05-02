@@ -209,16 +209,15 @@ set -eu
 export XDG_RUNTIME_DIR="/run/user/$app_uid"
 export XDG_SESSION_TYPE="wayland"
 export XDG_CURRENT_DESKTOP="labwc"
-export WAYLAND_DISPLAY="wayland-0"
-export LIBSEAT_BACKEND="seatd"
 export MOZ_ENABLE_WAYLAND=1
 export QT_QPA_PLATFORM=wayland
 export GDK_BACKEND=wayland,x11
 export SDL_VIDEODRIVER=wayland
 
-# Ensure runtime dir exists when running from a system service context.
-mkdir -p "$XDG_RUNTIME_DIR"
-chmod 700 "$XDG_RUNTIME_DIR"
+if [ ! -d "\$XDG_RUNTIME_DIR" ] || [ ! -w "\$XDG_RUNTIME_DIR" ]; then
+  echo "session_start: XDG_RUNTIME_DIR '\$XDG_RUNTIME_DIR' is missing or not writable" >&2
+  exit 1
+fi
 
 exec dbus-run-session -- labwc
 EOF
@@ -368,7 +367,13 @@ main() {
 main "\$@"
 EOF
 chmod +x /usr/local/bin/kiosk-ui-init
-session_env=$(cat <<EOF
+session_service_env=$(cat <<EOF
+Environment=XDG_RUNTIME_DIR=/run/user/$app_uid
+Environment=XDG_SESSION_TYPE=wayland
+Environment=XDG_CURRENT_DESKTOP=labwc
+EOF
+)
+wayland_client_env=$(cat <<EOF
 Environment=XDG_RUNTIME_DIR=/run/user/$app_uid
 Environment=WAYLAND_DISPLAY=wayland-0
 Environment=XDG_SESSION_TYPE=wayland
@@ -383,7 +388,7 @@ ui_init_desc="wlr-randr"
 cat << EOF > /etc/systemd/system/kiosk-session.service
 [Unit]
 Description=Kiosk graphical session on tty1
-After=systemd-user-sessions.service systemd-logind.service seatd.service
+After=systemd-user-sessions.service systemd-logind.service
 Wants=systemd-user-sessions.service
 
 [Service]
@@ -392,7 +397,7 @@ User=$app_user
 Group=$app_user
 WorkingDirectory=/home/$app_user
 Environment=HOME=/home/$app_user
-$session_env
+$session_service_env
 
 TTYPath=/dev/tty1
 TTYReset=yes
@@ -423,7 +428,7 @@ Type=oneshot
 User=$app_user
 Group=$app_user
 Environment=HOME=/home/$app_user
-$session_env
+$wayland_client_env
 ExecStart=/usr/local/bin/wait-for-gui-ready
 RemainAfterExit=yes
 
@@ -444,7 +449,7 @@ User=$app_user
 Group=$app_user
 WorkingDirectory=/home/$app_user
 Environment=HOME=/home/$app_user
-$session_env
+$wayland_client_env
 ExecStart=/usr/local/bin/kiosk-ui-init
 RemainAfterExit=yes
 
@@ -465,7 +470,7 @@ User=$app_user
 Group=$app_user
 WorkingDirectory=/home/$app_user
 Environment=HOME=/home/$app_user
-$session_env
+$wayland_client_env
 ExecStart=/home/$app_user/kiosk/xterm_demo.sh
 Restart=on-failure
 RestartSec=2
@@ -492,7 +497,7 @@ cat << EOF > /home/$app_user/kiosk/xterm_demo.sh
 set -euo pipefail
 
 # Wait for XWayland socket (labwc starts it on first X11 client connection)
-for _xi in $(seq 1 150); do
+for _xi in \$(seq 1 150); do
   [ -S "/tmp/.X11-unix/X0" ] && break
   sleep 0.2
 done
