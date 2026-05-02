@@ -28,7 +28,11 @@ chmod +x kiosk_cooker.sh
 
 `--no-demo` disables the default kiosk demo service (`xterm-demo.service`).  Again, useful when chaining into another application's install script.
 
+`--rpi-connect` installs full Raspberry Pi Connect (`rpi-connect`) and enables its user services globally so both remote shell and screen sharing are available.
+
 ## Raspberry Pi Connect
 This script now uses a Wayland/labwc kiosk session by default so it is compatible with full Raspberry Pi Connect screen sharing when `rpi-connect` is installed.
 
-The script does not install or enable `rpi-connect` automatically.  This keeps kiosk setup and account linking separate while ensuring the session framework is already compatible.
+If you pass `--rpi-connect`, the script installs full Connect (not lite) and enables `rpi-connect.service` and `rpi-connect-wayvnc.service` at the global user level.
+
+Account linking/sign-in still remains a separate step.

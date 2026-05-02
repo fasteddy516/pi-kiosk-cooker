@@ -45,28 +45,43 @@ if [ ! -v displays ]; then
   displays=2
 fi
 
+# set default Raspberry Pi Connect install state if it hasn't been specified
+if [ ! -v rpi_connect ]; then
+  rpi_connect=0
+fi
+
+# load remembered arguments from memory file (if present), then let
+# command-line arguments override them by processing both in order
+cli_args=("$@")
+memory_file="$(dirname "$(realpath "$0")")/kiosk_cooker.memory"
+if [ -f "$memory_file" ]; then
+  echo "* Loading remembered arguments from $memory_file"
+  # read saved args and prepend them; explicit CLI args come after and win
+  saved_args=()
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -n "$line" ] && saved_args+=("$line")
+  done < "$memory_file"
+  set -- "${saved_args[@]}" "$@"
+fi
+
 # process command-line arguments
+remember=0
 for arg in "$@"; do
   case $arg in
     --user=*)
       app_user="${arg#*=}"
-      shift
       ;;
     --password=*)
       app_password="${arg#*=}"
-      shift
       ;;
     --no-reboot)
       reboot=0
-      shift
       ;;
     --no-demo)
       demo=0
-      shift
       ;;
     --edid=*)
       edid="${arg#*=}"
-      shift
       ;;
     --displays=*)
       displays="${arg#*=}"
@@ -74,12 +89,27 @@ for arg in "$@"; do
         echo "! Invalid value for --displays: '$displays' (must be 1 or 2)"
         exit 1
       fi
-      shift
+      ;;
+    --rpi-connect)
+      rpi_connect=1
+      ;;
+    --remember)
+      remember=1
       ;;
     *)
       ;;
   esac
 done
+
+# write remembered arguments (all args except --remember itself)
+if [ $remember -eq 1 ]; then
+  saved=()
+  for arg in "${cli_args[@]}"; do
+    [ "$arg" != "--remember" ] && saved+=("$arg")
+  done
+  printf '%s\n' "${saved[@]}" > "$memory_file"
+  echo "* Arguments saved to $memory_file"
+fi
 
 # download specified edid file (if any) before making any system changes
 if [ "$edid" != "none" ]; then
@@ -93,7 +123,11 @@ fi
 # update installed packages
 apt update
 apt full-upgrade -y
-apt install -y labwc wlr-randr wayland-protocols xwayland dbus-user-session seatd xinput xterm x11-utils
+kiosk_packages="labwc wlr-randr wayland-protocols xwayland dbus-user-session seatd xinput xterm x11-utils"
+if [ $rpi_connect -eq 1 ]; then
+  kiosk_packages="$kiosk_packages rpi-connect"
+fi
+apt install -y $kiosk_packages
 
 # remove orphaned packages
 apt autoremove -y
@@ -195,6 +229,15 @@ systemctl disable getty@tty1.service
 # create compositor/session startup files
 su "$app_user" -c "mkdir -p ~/.config ~/kiosk"
 loginctl enable-linger "$app_user" || true
+if [ $rpi_connect -eq 1 ]; then
+  echo "* Enabling Raspberry Pi Connect user services"
+  if [ -f /usr/lib/systemd/user/rpi-connect.service ]; then
+    systemctl --global enable rpi-connect.service
+  fi
+  if [ -f /usr/lib/systemd/user/rpi-connect-wayvnc.service ]; then
+    systemctl --global enable rpi-connect-wayvnc.service
+  fi
+fi
 su "$app_user" -c "mkdir -p ~/.config/labwc"
 cat << EOF > /home/$app_user/.config/labwc/autostart
 #!/bin/sh
