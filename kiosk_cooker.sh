@@ -135,11 +135,6 @@ fi
 # disable screen blanking
 raspi-config nonint do_blanking 1
 
-# disable rainbow test pattern and force hdmi hotplug
-# (STAGE 1: COMMENTED OUT - verify if needed)
-# sed -i -e '/disable_splash=/d' -e '/hdmi_force_hotplug=/d' -e '${/^$/d;}' /boot/firmware/config.txt
-# sed -i -e '$a disable_splash=1\nhdmi_force_hotplug=1\n' /boot/firmware/config.txt
-
 # install edid file if specified
 if [ "$edid" != "none" ]; then
   mv "./${edid}.edid" /lib/firmware/${edid}.edid
@@ -153,7 +148,6 @@ cmdline="$(echo "$cmdline" \
   | sed -E \
     -e 's/(^| )loglevel=[^ ]+//g' \
     -e 's/(^| )quiet//g' \
-    -e 's/(^| )logo\.nologo//g' \
     -e 's/(^| )plymouth\.ignore-serial-consoles//g' \
     -e 's/(^| )vt\.global_cursor_default=[^ ]+//g' \
     -e 's/(^| )console=tty[0-9]+//g' \
@@ -171,11 +165,8 @@ cmdline="$(echo "$cmdline" \
 cmdline="$(echo "$cmdline" | tr -s ' ' | sed -E 's/^ +| +$//g')"
 
 # Append our desired tokens exactly once
-# (STAGE 1: COMMENTED OUT logo.nologo - verify if needed with console=tty3)
 cmdline="$cmdline loglevel=3 quiet plymouth.ignore-serial-consoles vt.global_cursor_default=0 \
 systemd.show_status=false fsck.repair=yes console=tty3"
-# cmdline="$cmdline loglevel=3 quiet logo.nologo plymouth.ignore-serial-consoles vt.global_cursor_default=0 \
-# systemd.show_status=false fsck.repair=yes console=tty3"
 if [ "$edid" != "none" ]; then
   if [ "$displays" -eq 2 ]; then
     cmdline="$cmdline \
