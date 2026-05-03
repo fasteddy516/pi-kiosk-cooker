@@ -342,7 +342,7 @@ cat << 'EOF' > /home/$app_user/kiosk/kiosk_browser_1/index.html
   <main>
     <h1>Kiosk Browser 1 Ready</h1>
     <p>This local startup page confirms the fullscreen kiosk browser is running on display 1.</p>
-    <code>Change the startup URL in launch_kiosk_browser_1.sh when you are ready.</code>
+    <code>Create or edit startup_url.txt in this folder to point to another URL.</code>
   </main>
 </body>
 </html>
@@ -369,7 +369,19 @@ fi
 
 APP_DIR="$HOME/kiosk/kiosk_browser_1"
 PROFILE_DIR="$APP_DIR/profile"
-START_URL="file://$APP_DIR/index.html"
+URL_FILE="$APP_DIR/startup_url.txt"
+DEFAULT_URL="file://$APP_DIR/index.html"
+START_URL="$DEFAULT_URL"
+
+if [ -f "$URL_FILE" ]; then
+  raw_url="$(head -n 1 "$URL_FILE" | tr -d '\r')"
+  raw_url="$(echo "$raw_url" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+  if [[ "$raw_url" =~ ^https?:// ]] || [[ "$raw_url" =~ ^file:// ]]; then
+    START_URL="$raw_url"
+  else
+    echo "Ignoring invalid startup URL in $URL_FILE: '$raw_url'" >&2
+  fi
+fi
 
 mkdir -p "$PROFILE_DIR"
 

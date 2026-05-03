@@ -98,9 +98,9 @@ The service runs `/home/<app_user>/kiosk/kiosk_browser_1/launch_kiosk_browser_1.
 
 Initial startup content is a local static page at `/home/<app_user>/kiosk/kiosk_browser_1/index.html`.
 
-To point the kiosk to another site later, update this line in `launch_kiosk_browser_1.sh`:
+To point the kiosk to another site later, create `/home/<app_user>/kiosk/kiosk_browser_1/startup_url.txt` with a single line containing the URL (for example `https://example.com`).
 
-`START_URL="file://$APP_DIR/index.html"`
+When present and valid (`http://`, `https://`, or `file://`), that value is used. If the file is missing or invalid, the launcher falls back to the local hello-world page.
 
 ---
 
