@@ -43,7 +43,7 @@ chmod +x kiosk_cooker.sh
 The following is a breakdown of every significant action the script performs, and why.
 
 ### Package installation
-The script runs `apt update` and `apt upgrade` to bring the system fully up to date, then installs the packages required for a Wayland kiosk session:
+The script sets `DEBIAN_FRONTEND=noninteractive` for the duration of its execution so that `apt` and `dpkg` never block on interactive prompts (e.g. config file conflict dialogs during `apt upgrade`). It then runs `apt update` and `apt upgrade` to bring the system fully up to date, then installs the packages required for a Wayland kiosk session:
 
 | Package | Purpose |
 |---|---|
