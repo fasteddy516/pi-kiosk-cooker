@@ -183,7 +183,7 @@ echo "$cmdline" > /boot/firmware/cmdline.txt
 grep "^$app_user:" /etc/passwd > /dev/null
 if [ $? -ne 0 ]; then
   echo "User '$app_user' does not exist and will be created"
-  useradd -s /bin/bash -p "$(openssl passwd -6 $app_password)" $app_user --create-home
+  useradd -s /bin/bash -p "$(openssl passwd -6 "$app_password")" $app_user --create-home
 else  
   echo "User '$app_user' already exists"
 fi
