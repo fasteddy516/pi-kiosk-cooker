@@ -88,6 +88,8 @@ for arg in "$@"; do
       remember=1
       ;;
     *)
+      echo "! Unknown argument: '$arg'"
+      exit 1
       ;;
   esac
 done
