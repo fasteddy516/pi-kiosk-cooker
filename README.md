@@ -26,8 +26,6 @@ chmod +x kiosk_cooker.sh
 
 `--no-reboot` disables the automatic reboot at the end of the script.  Useful when chaining this script into another application's install script.
 
-`--no-demo` disables the default kiosk demo service (`xterm-demo.service`).  Again, useful when chaining into another application's install script.
-
 `--no-rpi-connect` skips installation of Raspberry Pi Connect (`rpi-connect`).  Connect is installed and its user services enabled globally by default.
 
 `--edid=<name>` sets the EDID profile to use for the display(s).  Defaults to `1080P-2CH`.  Use `--edid=none` to skip EDID configuration entirely.
@@ -53,7 +51,7 @@ The script sets `DEBIAN_FRONTEND=noninteractive` for the duration of its executi
 | `xwayland` | Compatibility layer so X11 applications can run inside the Wayland session. |
 | `dbus-user-session` | Provides a per-user D-Bus session bus, required by Wayland and labwc. |
 | `seatd` | A seat management daemon that grants unprivileged users access to input and display hardware without requiring root. |
-| `xterm` | A minimal terminal emulator, used by the optional demo service to verify the kiosk environment is working. |
+| `chromium-browser` / `chromium` | Chromium-based browser used for fullscreen kiosk operation. The script installs whichever package is available on the target OS. |
 | `rpi-connect` _(optional)_ | Full Raspberry Pi Connect package (not lite), required for screen sharing support. Installed by default; skipped when `--no-rpi-connect` is passed. |
 
 ### Boot configuration (`/boot/firmware/cmdline.txt`)
@@ -93,8 +91,16 @@ The kiosk session is built around three layered systemd services:
 
 **`labwc/autostart`** is a shell script that labwc executes at session start. When Raspberry Pi Connect is enabled, it imports the Wayland session environment into systemd and D-Bus so that `rpi-connect-wayvnc.service` can reach the compositor for screen sharing.
 
-### Demo service (`xterm-demo.service`)
-An optional demo application runs after the display layout is initialised. It opens one `xterm` window per configured display to confirm that the Wayland session is running, displays appear correctly, and XWayland (for X11 application compatibility) is functional. This service is enabled by default and can be disabled with `--no-demo` (or removed once you replace it with your own application service).
+### Browser kiosk service (`kiosk_browser_1.service`)
+After the graphical session and display layout are ready, `kiosk_browser_1.service` starts a fullscreen Chromium kiosk instance for display 1 and is configured with `Restart=always` so it automatically respawns if it exits or crashes.
+
+The service runs `/home/<app_user>/kiosk/kiosk_browser_1/launch_kiosk_browser_1.sh`, which launches Chromium in kiosk mode with startup prompts and browser chrome disabled.
+
+Initial startup content is a local static page at `/home/<app_user>/kiosk/kiosk_browser_1/index.html`.
+
+To point the kiosk to another site later, update this line in `launch_kiosk_browser_1.sh`:
+
+`START_URL="file://$APP_DIR/index.html"`
 
 ---
 

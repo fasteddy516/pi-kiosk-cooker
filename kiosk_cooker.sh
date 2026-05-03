@@ -14,11 +14,6 @@ if [ ! -v reboot ]; then
   reboot=1
 fi
 
-# set default demo state if necessary
-if [ ! -v demo ]; then
-  demo=1
-fi
-
 # set default application username if it hasn't been specified
 if [ ! -v app_user ]; then
   app_user=pi
@@ -71,9 +66,6 @@ for arg in "$@"; do
     --no-reboot)
       reboot=0
       ;;
-    --no-demo)
-      demo=0
-      ;;
     --edid=*)
       edid="${arg#*=}"
       ;;
@@ -119,7 +111,19 @@ fi
 # update installed packages
 apt update
 apt upgrade -y
-kiosk_packages="labwc wlr-randr wayland-protocols xwayland dbus-user-session seatd xterm"
+browser_package=""
+for candidate in chromium-browser chromium; do
+  if apt-cache show "$candidate" >/dev/null 2>&1; then
+    browser_package="$candidate"
+    break
+  fi
+done
+if [ -z "$browser_package" ]; then
+  echo "! Unable to find a supported Chromium package (tried: chromium-browser, chromium)"
+  exit 1
+fi
+
+kiosk_packages="labwc wlr-randr wayland-protocols xwayland dbus-user-session seatd $browser_package"
 if [ $rpi_connect -eq 1 ]; then
   kiosk_packages="$kiosk_packages rpi-connect"
 fi
@@ -268,6 +272,122 @@ exec dbus-run-session -- labwc
 EOF
 chown $app_user:$app_user /home/$app_user/kiosk/session_start.sh
 chmod +x /home/$app_user/kiosk/session_start.sh
+
+# create local static app files and browser launcher for display 1
+su "$app_user" -c "mkdir -p ~/kiosk/kiosk_browser_1/profile"
+cat << 'EOF' > /home/$app_user/kiosk/kiosk_browser_1/index.html
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kiosk Browser 1</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg-a: #f4f7ff;
+      --bg-b: #d9e4ff;
+      --ink: #12213d;
+      --accent: #1f4fd1;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: "Noto Sans", "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: radial-gradient(circle at 20% 20%, #ffffff 0%, var(--bg-a) 45%, var(--bg-b) 100%);
+    }
+
+    main {
+      width: min(90vw, 900px);
+      padding: 3rem;
+      border-radius: 1.2rem;
+      background: rgba(255, 255, 255, 0.88);
+      box-shadow: 0 1rem 3rem rgba(12, 40, 99, 0.2);
+      text-align: center;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(2rem, 5vw, 3.25rem);
+      letter-spacing: 0.02em;
+    }
+
+    p {
+      margin: 1rem 0 0;
+      font-size: clamp(1rem, 2vw, 1.35rem);
+      line-height: 1.5;
+    }
+
+    code {
+      display: inline-block;
+      margin-top: 1.5rem;
+      padding: 0.5rem 0.75rem;
+      border-radius: 0.5rem;
+      color: #fff;
+      background: var(--accent);
+      font-size: 0.95rem;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Kiosk Browser 1 Ready</h1>
+    <p>This local startup page confirms the fullscreen kiosk browser is running on display 1.</p>
+    <code>Change the startup URL in launch_kiosk_browser_1.sh when you are ready.</code>
+  </main>
+</body>
+</html>
+EOF
+chown $app_user:$app_user /home/$app_user/kiosk/kiosk_browser_1/index.html
+
+cat << 'EOF' > /home/$app_user/kiosk/kiosk_browser_1/launch_kiosk_browser_1.sh
+#!/usr/bin/env bash
+set -euo pipefail
+
+export HOME="$HOME"
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
+export XDG_SESSION_TYPE="wayland"
+
+if command -v chromium-browser >/dev/null 2>&1; then
+  BROWSER_BIN="chromium-browser"
+elif command -v chromium >/dev/null 2>&1; then
+  BROWSER_BIN="chromium"
+else
+  echo "No Chromium browser binary found" >&2
+  exit 1
+fi
+
+APP_DIR="$HOME/kiosk/kiosk_browser_1"
+PROFILE_DIR="$APP_DIR/profile"
+START_URL="file://$APP_DIR/index.html"
+
+mkdir -p "$PROFILE_DIR"
+
+exec "$BROWSER_BIN" \
+  --ozone-platform=wayland \
+  --enable-features=UseOzonePlatform \
+  --kiosk "$START_URL" \
+  --window-position=0,0 \
+  --start-fullscreen \
+  --no-first-run \
+  --no-default-browser-check \
+  --disable-session-crashed-bubble \
+  --disable-infobars \
+  --disable-features=Translate,MediaRouter,AutofillServerCommunication \
+  --check-for-update-interval=31536000 \
+  --user-data-dir="$PROFILE_DIR"
+EOF
+chown $app_user:$app_user /home/$app_user/kiosk/kiosk_browser_1/launch_kiosk_browser_1.sh
+chmod +x /home/$app_user/kiosk/kiosk_browser_1/launch_kiosk_browser_1.sh
 
 # create wait-for-gui-ready script to ensure the compositor is ready before starting the kiosk application
 cat << EOF > /usr/local/bin/wait-for-gui-ready
@@ -502,10 +622,10 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 EOF
 
-# create xterm demo service to run a demo application after the UI is ready (if demo mode is enabled)
-cat << EOF > /etc/systemd/system/xterm-demo.service
+# create browser service to run fullscreen kiosk browser on display 1
+cat << EOF > /etc/systemd/system/kiosk_browser_1.service
 [Unit]
-Description=XTerm demo (kiosk install verification)
+Description=Kiosk browser on display 1
 Requires=kiosk-ui-init.service
 After=kiosk-ui-init.service
 
@@ -516,8 +636,8 @@ Group=$app_user
 WorkingDirectory=/home/$app_user
 Environment=HOME=/home/$app_user
 $wayland_client_env
-ExecStart=/home/$app_user/kiosk/xterm_demo.sh
-Restart=on-failure
+ExecStart=/home/$app_user/kiosk/kiosk_browser_1/launch_kiosk_browser_1.sh
+Restart=always
 RestartSec=2
 
 [Install]
@@ -529,34 +649,7 @@ systemctl daemon-reload
 systemctl enable kiosk-session.service
 systemctl enable kiosk-session-ready.service
 systemctl enable kiosk-ui-init.service
-if [ $demo -eq 1 ]; then
-  systemctl enable xterm-demo.service
-else
-  systemctl disable --now xterm-demo.service >/dev/null 2>&1 || true
-fi
-
-# create xterm demo script
-su $app_user -c "touch ~/kiosk/xterm_demo.sh"
-cat << EOF > /home/$app_user/kiosk/xterm_demo.sh
-#!/bin/bash
-set -euo pipefail
-
-# Wait for XWayland socket (labwc starts it on first X11 client connection)
-for _xi in \$(seq 1 150); do
-  [ -S "/tmp/.X11-unix/X0" ] && break
-  sleep 0.2
-done
-export DISPLAY=:0
-
-xterm -geometry 285x65+100+100 -xrm 'XTerm.vt100.allowTitleOps: false' -T "This is HDMI-1" & p1=\$!
-if [ $displays -eq 2 ]; then
-  xterm -geometry 285x65+2020+100 -xrm 'XTerm.vt100.allowTitleOps: false' -T "This is HDMI-2" & p2=\$!
-  wait "\$p1" "\$p2"
-else
-  wait "\$p1"
-fi
-EOF
-su $app_user -c "chmod +x ~/kiosk/xterm_demo.sh"
+systemctl enable kiosk_browser_1.service
 
 # remind about rpi-connect signin if applicable
 if [ $rpi_connect -eq 1 ]; then
