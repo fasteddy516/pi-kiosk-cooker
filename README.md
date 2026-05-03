@@ -94,13 +94,22 @@ The kiosk session is built around three layered systemd services:
 ### Browser kiosk service (`kiosk_browser_1.service`)
 After the graphical session and display layout are ready, `kiosk_browser_1.service` starts a fullscreen Chromium kiosk instance for display 1 and is configured with `Restart=always` so it automatically respawns if it exits or crashes.
 
-The service runs `/home/<app_user>/kiosk/kiosk_browser_1/launch_kiosk_browser_1.sh`, which launches Chromium in kiosk mode with startup prompts and browser chrome disabled.
+The service runs `/home/<app_user>/kiosk/kiosk_browser_1/launch_kiosk_browser_1.sh`, which launches Chromium in kiosk mode with startup prompts and browser chrome disabled. At launch time, the script queries Wayland output geometry (`wlr-randr`) and places the window origin on `HDMI-A-1` so browser 1 lands on display 1 reliably.
 
 Initial startup content is a local static page at `/home/<app_user>/kiosk/kiosk_browser_1/index.html`.
 
 To point the kiosk to another site later, create `/home/<app_user>/kiosk/kiosk_browser_1/startup_url.txt` with a single line containing the URL (for example `https://example.com`).
 
 When present and valid (`http://`, `https://`, or `file://`), that value is used. If the file is missing or invalid, the launcher falls back to the local hello-world page.
+
+### Display 2 scaffold (`kiosk_browser_2.service`)
+The script also creates a parallel display 2 scaffold:
+
+- `/home/<app_user>/kiosk/kiosk_browser_2/index.html`
+- `/home/<app_user>/kiosk/kiosk_browser_2/launch_kiosk_browser_2.sh`
+- `/etc/systemd/system/kiosk_browser_2.service`
+
+This service is created but intentionally not enabled by default. The display 2 launcher uses the same one-line `startup_url.txt` pattern and targets `HDMI-A-2` when present.
 
 ---
 

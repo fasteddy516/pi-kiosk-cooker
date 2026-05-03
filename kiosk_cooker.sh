@@ -123,6 +123,7 @@ if [ -z "$browser_package" ]; then
   echo "! Unable to find a supported Chromium package (tried: chromium-browser, chromium)"
   exit 1
 fi
+echo "* Using browser package: $browser_package"
 
 kiosk_packages="labwc wlr-randr wayland-protocols xwayland dbus-user-session seatd $browser_package"
 if [ $rpi_connect -eq 1 ]; then
@@ -274,8 +275,8 @@ EOF
 chown $app_user:$app_user /home/$app_user/kiosk/session_start.sh
 chmod +x /home/$app_user/kiosk/session_start.sh
 
-# create local static app files and browser launcher for display 1
-su "$app_user" -c "mkdir -p ~/kiosk/kiosk_browser_1/profile"
+# create local static app files and browser launchers
+su "$app_user" -c "mkdir -p ~/kiosk/kiosk_browser_1/profile ~/kiosk/kiosk_browser_2/profile"
 cat << 'EOF' > /home/$app_user/kiosk/kiosk_browser_1/index.html
 <!doctype html>
 <html lang="en">
@@ -372,6 +373,8 @@ PROFILE_DIR="$APP_DIR/profile"
 URL_FILE="$APP_DIR/startup_url.txt"
 DEFAULT_URL="file://$APP_DIR/index.html"
 START_URL="$DEFAULT_URL"
+OUTPUT_NAME="HDMI-A-1"
+FALLBACK_WINDOW_POS="0,0"
 
 if [ -f "$URL_FILE" ]; then
   raw_url="$(head -n 1 "$URL_FILE" | tr -d '\r')"
@@ -385,11 +388,31 @@ fi
 
 mkdir -p "$PROFILE_DIR"
 
+get_output_position() {
+  local output_name="$1"
+  local pos
+  pos="$(wlr-randr 2>/dev/null | awk -v out="$output_name" '
+    $1 == out { in_out = 1; next }
+    in_out && $1 == "Position:" { print $2; exit }
+    in_out && /^[A-Za-z0-9_.-]+$/ { in_out = 0 }
+  ')"
+  if [[ "$pos" =~ ^[0-9]+,[0-9]+$ ]]; then
+    echo "$pos"
+    return 0
+  fi
+  return 1
+}
+
+WINDOW_POS="$FALLBACK_WINDOW_POS"
+if resolved_pos="$(get_output_position "$OUTPUT_NAME")"; then
+  WINDOW_POS="$resolved_pos"
+fi
+
 exec "$BROWSER_BIN" \
   --ozone-platform=wayland \
   --enable-features=UseOzonePlatform \
   --kiosk "$START_URL" \
-  --window-position=0,0 \
+  --window-position="$WINDOW_POS" \
   --start-fullscreen \
   --no-first-run \
   --no-default-browser-check \
@@ -401,6 +424,117 @@ exec "$BROWSER_BIN" \
 EOF
 chown $app_user:$app_user /home/$app_user/kiosk/kiosk_browser_1/launch_kiosk_browser_1.sh
 chmod +x /home/$app_user/kiosk/kiosk_browser_1/launch_kiosk_browser_1.sh
+
+cat << 'EOF' > /home/$app_user/kiosk/kiosk_browser_2/index.html
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kiosk Browser 2</title>
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: "Noto Sans", "Segoe UI", sans-serif;
+      background: #f2f6ff;
+      color: #1b2b49;
+    }
+    main {
+      padding: 2rem;
+      text-align: center;
+      background: #ffffff;
+      border-radius: 1rem;
+      box-shadow: 0 1rem 2.5rem rgba(18, 33, 61, 0.15);
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Kiosk Browser 2 Scaffold</h1>
+    <p>This page is ready for an independent display-2 service when enabled.</p>
+  </main>
+</body>
+</html>
+EOF
+chown $app_user:$app_user /home/$app_user/kiosk/kiosk_browser_2/index.html
+
+cat << 'EOF' > /home/$app_user/kiosk/kiosk_browser_2/launch_kiosk_browser_2.sh
+#!/usr/bin/env bash
+set -euo pipefail
+
+export HOME="$HOME"
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
+export XDG_SESSION_TYPE="wayland"
+
+if command -v chromium-browser >/dev/null 2>&1; then
+  BROWSER_BIN="chromium-browser"
+elif command -v chromium >/dev/null 2>&1; then
+  BROWSER_BIN="chromium"
+else
+  echo "No Chromium browser binary found" >&2
+  exit 1
+fi
+
+APP_DIR="$HOME/kiosk/kiosk_browser_2"
+PROFILE_DIR="$APP_DIR/profile"
+URL_FILE="$APP_DIR/startup_url.txt"
+DEFAULT_URL="file://$APP_DIR/index.html"
+START_URL="$DEFAULT_URL"
+OUTPUT_NAME="HDMI-A-2"
+FALLBACK_WINDOW_POS="1920,0"
+
+if [ -f "$URL_FILE" ]; then
+  raw_url="$(head -n 1 "$URL_FILE" | tr -d '\r')"
+  raw_url="$(echo "$raw_url" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+  if [[ "$raw_url" =~ ^https?:// ]] || [[ "$raw_url" =~ ^file:// ]]; then
+    START_URL="$raw_url"
+  else
+    echo "Ignoring invalid startup URL in $URL_FILE: '$raw_url'" >&2
+  fi
+fi
+
+mkdir -p "$PROFILE_DIR"
+
+get_output_position() {
+  local output_name="$1"
+  local pos
+  pos="$(wlr-randr 2>/dev/null | awk -v out="$output_name" '
+    $1 == out { in_out = 1; next }
+    in_out && $1 == "Position:" { print $2; exit }
+    in_out && /^[A-Za-z0-9_.-]+$/ { in_out = 0 }
+  ')"
+  if [[ "$pos" =~ ^[0-9]+,[0-9]+$ ]]; then
+    echo "$pos"
+    return 0
+  fi
+  return 1
+}
+
+WINDOW_POS="$FALLBACK_WINDOW_POS"
+if resolved_pos="$(get_output_position "$OUTPUT_NAME")"; then
+  WINDOW_POS="$resolved_pos"
+fi
+
+exec "$BROWSER_BIN" \
+  --ozone-platform=wayland \
+  --enable-features=UseOzonePlatform \
+  --kiosk "$START_URL" \
+  --window-position="$WINDOW_POS" \
+  --start-fullscreen \
+  --no-first-run \
+  --no-default-browser-check \
+  --disable-session-crashed-bubble \
+  --disable-infobars \
+  --disable-features=Translate,MediaRouter,AutofillServerCommunication \
+  --check-for-update-interval=31536000 \
+  --user-data-dir="$PROFILE_DIR"
+EOF
+chown $app_user:$app_user /home/$app_user/kiosk/kiosk_browser_2/launch_kiosk_browser_2.sh
+chmod +x /home/$app_user/kiosk/kiosk_browser_2/launch_kiosk_browser_2.sh
 
 # create wait-for-gui-ready script to ensure the compositor is ready before starting the kiosk application
 cat << EOF > /usr/local/bin/wait-for-gui-ready
@@ -650,6 +784,28 @@ WorkingDirectory=/home/$app_user
 Environment=HOME=/home/$app_user
 $wayland_client_env
 ExecStart=/home/$app_user/kiosk/kiosk_browser_1/launch_kiosk_browser_1.sh
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# create browser service scaffold for display 2 (not enabled by default)
+cat << EOF > /etc/systemd/system/kiosk_browser_2.service
+[Unit]
+Description=Kiosk browser on display 2
+Requires=kiosk-ui-init.service
+After=kiosk-ui-init.service
+
+[Service]
+Type=simple
+User=$app_user
+Group=$app_user
+WorkingDirectory=/home/$app_user
+Environment=HOME=/home/$app_user
+$wayland_client_env
+ExecStart=/home/$app_user/kiosk/kiosk_browser_2/launch_kiosk_browser_2.sh
 Restart=always
 RestartSec=2
 
