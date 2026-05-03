@@ -1,16 +1,7 @@
 #!/bin/bash
 
 # ensure the script is being run as root
-if [ "$(id -u)" -eq 0 ]; then
-  # check if SUDO_USER is set
-  if [ -n "$SUDO_USER" ]; then
-    echo "* Script is run by sudo, original user is $SUDO_USER"
-    original_user=$SUDO_USER
-  else
-    echo "* Script is run by root, but not through sudo"
-    original_user=$(whoami)
-  fi
-else
+if [ "$(id -u)" -ne 0 ]; then
   echo "! This script must be run as root (i.e. with sudo)"
   exit
 fi
@@ -47,7 +38,7 @@ fi
 
 # set default Raspberry Pi Connect install state if it hasn't been specified
 if [ ! -v rpi_connect ]; then
-  rpi_connect=0
+  rpi_connect=1
 fi
 
 # load remembered arguments from memory file (if present), then let
@@ -90,8 +81,8 @@ for arg in "$@"; do
         exit 1
       fi
       ;;
-    --rpi-connect)
-      rpi_connect=1
+    --no-rpi-connect)
+      rpi_connect=0
       ;;
     --remember)
       remember=1
@@ -122,8 +113,8 @@ fi
 
 # update installed packages
 apt update
-apt full-upgrade -y
-kiosk_packages="labwc wlr-randr wayland-protocols xwayland dbus-user-session seatd xinput xterm x11-utils"
+apt upgrade -y
+kiosk_packages="labwc wlr-randr wayland-protocols xwayland dbus-user-session seatd xterm"
 if [ $rpi_connect -eq 1 ]; then
   kiosk_packages="$kiosk_packages rpi-connect"
 fi
@@ -145,8 +136,9 @@ fi
 raspi-config nonint do_blanking 1
 
 # disable rainbow test pattern and force hdmi hotplug
-sed -i -e '/disable_splash=/d' -e '/hdmi_force_hotplug=/d' -e '${/^$/d;}' /boot/firmware/config.txt
-sed -i -e '$a disable_splash=1\nhdmi_force_hotplug=1\n' /boot/firmware/config.txt
+# (STAGE 1: COMMENTED OUT - verify if needed)
+# sed -i -e '/disable_splash=/d' -e '/hdmi_force_hotplug=/d' -e '${/^$/d;}' /boot/firmware/config.txt
+# sed -i -e '$a disable_splash=1\nhdmi_force_hotplug=1\n' /boot/firmware/config.txt
 
 # install edid file if specified
 if [ "$edid" != "none" ]; then
@@ -179,8 +171,11 @@ cmdline="$(echo "$cmdline" \
 cmdline="$(echo "$cmdline" | tr -s ' ' | sed -E 's/^ +| +$//g')"
 
 # Append our desired tokens exactly once
-cmdline="$cmdline loglevel=3 quiet logo.nologo plymouth.ignore-serial-consoles vt.global_cursor_default=0 \
+# (STAGE 1: COMMENTED OUT logo.nologo - verify if needed with console=tty3)
+cmdline="$cmdline loglevel=3 quiet plymouth.ignore-serial-consoles vt.global_cursor_default=0 \
 systemd.show_status=false fsck.repair=yes console=tty3"
+# cmdline="$cmdline loglevel=3 quiet logo.nologo plymouth.ignore-serial-consoles vt.global_cursor_default=0 \
+# systemd.show_status=false fsck.repair=yes console=tty3"
 if [ "$edid" != "none" ]; then
   if [ "$displays" -eq 2 ]; then
     cmdline="$cmdline \
@@ -249,6 +244,9 @@ systemctl --user restart rpi-connect-wayvnc.service >/dev/null 2>&1 || true
 EOF
 )
 else
+  echo "* Disabling Raspberry Pi Connect user services"
+  systemctl --global disable rpi-connect.service >/dev/null 2>&1 || true
+  systemctl --global disable rpi-connect-wayvnc.service >/dev/null 2>&1 || true
   labwc_connect_autostart=""
 fi
 su "$app_user" -c "mkdir -p ~/.config/labwc"
@@ -538,8 +536,6 @@ EOF
 
 # finish setting up systemd services and targets
 systemctl daemon-reload
-systemctl disable kiosk-session-ready.target >/dev/null 2>&1 || true
-systemctl disable kiosk-ui-ready.target >/dev/null 2>&1 || true
 systemctl enable kiosk-session.service
 systemctl enable kiosk-session-ready.service
 systemctl enable kiosk-ui-init.service

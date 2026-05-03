@@ -28,7 +28,7 @@ chmod +x kiosk_cooker.sh
 
 `--no-demo` disables the default kiosk demo service (`xterm-demo.service`).  Again, useful when chaining into another application's install script.
 
-`--rpi-connect` installs full Raspberry Pi Connect (`rpi-connect`) and enables its user services globally so both remote shell and screen sharing are available.
+`--no-rpi-connect` skips installation of Raspberry Pi Connect (`rpi-connect`).  Connect is installed and its user services enabled globally by default.
 
 `--edid=<name>` sets the EDID profile to use for the display(s).  Defaults to `1080P-2CH`.  Use `--edid=none` to skip EDID configuration entirely.
 
