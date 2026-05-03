@@ -6,6 +6,9 @@ if [ "$(id -u)" -ne 0 ]; then
   exit
 fi
 
+# suppress interactive prompts from apt/dpkg for the duration of this script
+export DEBIAN_FRONTEND=noninteractive
+
 # set default reboot state if necessary
 if [ ! -v reboot ]; then
   reboot=1
