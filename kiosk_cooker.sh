@@ -155,7 +155,6 @@ cmdline="$(echo "$cmdline" \
     -e 's/(^| )drm\.edid_firmware=HDMI-A-1:[^ ]+//g' \
     -e 's/(^| )drm\.edid_firmware=HDMI-A-2:[^ ]+//g' \
     -e 's/(^| )vc4\.force_hotplug=[^ ]+//g' \
-    -e 's/(^| )fsck\.mode=[^ ]+//g' \
     -e 's/(^| )fsck\.repair=[^ ]+//g' \
 )"
 
