@@ -819,6 +819,11 @@ systemctl enable kiosk-session.service
 systemctl enable kiosk-session-ready.service
 systemctl enable kiosk-ui-init.service
 systemctl enable kiosk_browser_1.service
+if [ "$displays" -eq 2 ]; then
+  systemctl enable kiosk_browser_2.service
+else
+  systemctl disable --now kiosk_browser_2.service >/dev/null 2>&1 || true
+fi
 
 # remind about rpi-connect signin if applicable
 if [ $rpi_connect -eq 1 ]; then

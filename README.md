@@ -109,7 +109,7 @@ The script also creates a parallel display 2 scaffold:
 - `/home/<app_user>/kiosk/kiosk_browser_2/launch_kiosk_browser_2.sh`
 - `/etc/systemd/system/kiosk_browser_2.service`
 
-This service is created but intentionally not enabled by default. The display 2 launcher uses the same one-line `startup_url.txt` pattern and targets `HDMI-A-2` when present.
+When the script runs with `--displays=2`, `kiosk_browser_2.service` is enabled automatically. For single-display installs (`--displays=1`), it is left disabled. The display 2 launcher uses the same one-line `startup_url.txt` pattern and targets `HDMI-A-2` when present.
 
 ---
 
