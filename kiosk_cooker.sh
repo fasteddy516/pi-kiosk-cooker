@@ -146,9 +146,6 @@ cmdline="$(cat /boot/firmware/cmdline.txt)"
 # Remove tokens we manage (repeatable-safe)
 cmdline="$(echo "$cmdline" \
   | sed -E \
-    -e 's/(^| )loglevel=[^ ]+//g' \
-    -e 's/(^| )quiet//g' \
-    -e 's/(^| )plymouth\.ignore-serial-consoles//g' \
     -e 's/(^| )vt\.global_cursor_default=[^ ]+//g' \
     -e 's/(^| )console=tty[0-9]+//g' \
     -e 's/(^| )video=HDMI-A-1:[^ ]+//g' \
@@ -156,7 +153,6 @@ cmdline="$(echo "$cmdline" \
     -e 's/(^| )drm\.edid_firmware=HDMI-A-1:[^ ]+//g' \
     -e 's/(^| )drm\.edid_firmware=HDMI-A-2:[^ ]+//g' \
     -e 's/(^| )vc4\.force_hotplug=[^ ]+//g' \
-    -e 's/(^| )systemd\.show_status=[^ ]+//g' \
     -e 's/(^| )fsck\.mode=[^ ]+//g' \
     -e 's/(^| )fsck\.repair=[^ ]+//g' \
 )"
@@ -165,8 +161,7 @@ cmdline="$(echo "$cmdline" \
 cmdline="$(echo "$cmdline" | tr -s ' ' | sed -E 's/^ +| +$//g')"
 
 # Append our desired tokens exactly once
-cmdline="$cmdline loglevel=3 quiet plymouth.ignore-serial-consoles vt.global_cursor_default=0 \
-systemd.show_status=false fsck.repair=yes console=tty3"
+cmdline="$cmdline vt.global_cursor_default=0 fsck.repair=yes console=tty3"
 if [ "$edid" != "none" ]; then
   if [ "$displays" -eq 2 ]; then
     cmdline="$cmdline \

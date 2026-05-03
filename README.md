@@ -61,11 +61,7 @@ The kernel command line is modified idempotently — existing tokens managed by 
 
 | Token | Purpose |
 |---|---|
-| `loglevel=3` | Suppresses verbose kernel boot messages from appearing on the console. |
-| `quiet` | Further reduces kernel output during boot, keeping the console clean. |
-| `plymouth.ignore-serial-consoles` | Prevents Plymouth from attaching to serial consoles, avoiding spurious output. |
 | `vt.global_cursor_default=0` | Hides the blinking text cursor on Linux virtual terminals (the console), so it doesn't show through the compositor before the graphical session starts. |
-| `systemd.show_status=false` | Hides systemd service status lines during boot for a cleaner startup appearance. |
 | `fsck.repair=yes` | Automatically repairs filesystem errors on boot instead of dropping to a recovery prompt, keeping the kiosk unattended-safe. |
 | `console=tty3` | Redirects kernel console output to tty3 (a background virtual terminal), so boot messages don't appear on the primary display. |
 | `video=HDMI-A-1:1920x1080@60D` _(optional)_ | Forces the first HDMI output to 1920×1080 @ 60 Hz at the kernel/DRM level before any display manager is involved. Only added when an EDID profile is in use. |
