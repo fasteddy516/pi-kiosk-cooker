@@ -113,7 +113,8 @@ apt update
 apt upgrade -y
 browser_package=""
 for candidate in chromium-browser chromium; do
-  if apt-cache show "$candidate" >/dev/null 2>&1; then
+  candidate_version="$(apt-cache policy "$candidate" 2>/dev/null | awk '/Candidate:/ {print $2; exit}')"
+  if [ -n "$candidate_version" ] && [ "$candidate_version" != "(none)" ]; then
     browser_package="$candidate"
     break
   fi
