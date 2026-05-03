@@ -298,7 +298,7 @@ else
   kiosk_mode=""
 fi
 kiosk_num_displays=$displays
-cat <<EOF | sudo tee /usr/local/bin/kiosk-ui-init >/dev/null
+cat <<EOF | tee /usr/local/bin/kiosk-ui-init >/dev/null
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -568,6 +568,6 @@ fi
 # all done - countdown to reboot
 if [ $reboot -eq 1 ]; then
   echo ""
-  for i in `seq 30 -1 1` ; do echo -ne "\r*** Rebooting in $i seconds.  (CTRL-C to cancel) ***" ; sleep 1 ; done
-  sudo reboot
+  for i in $(seq 30 -1 1) ; do echo -ne "\r*** Rebooting in $i seconds.  (CTRL-C to cancel) ***" ; sleep 1 ; done
+  reboot
 fi
