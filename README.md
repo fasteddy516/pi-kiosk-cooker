@@ -109,14 +109,14 @@ You can still set the URL manually by creating `/home/<app_user>/kiosk/kiosk_bro
 
 When present and valid (`http://`, `https://`, or `file://`), that value is used. If the file is missing or invalid, the launcher falls back to the local startup page.
 
-### Display 2 scaffold (`kiosk_browser_2.service`)
-The script also creates a parallel display 2 scaffold:
+### Display 2 service (`kiosk_browser_2.service`)
+The script also creates a parallel display 2 browser setup:
 
 - `/home/<app_user>/kiosk/kiosk_browser_2/index.html`
 - `/home/<app_user>/kiosk/kiosk_browser_2/launch_kiosk_browser_2.sh`
 - `/etc/systemd/system/kiosk_browser_2.service`
 
-When the script runs with `--displays=2`, `kiosk_browser_2.service` is enabled automatically. For single-display installs (`--displays=1`), it is left disabled. The display 2 launcher uses the same one-line `startup_url.txt` pattern and targets `HDMI-A-2` when present.
+When the script runs with `--displays=2`, `kiosk_browser_2.service` is enabled automatically. For single-display installs (`--displays=1`), it is left disabled. Display 2 now uses the same startup page behavior as display 1, including the in-page URL field and **Set start page** flow that writes to `/home/<app_user>/kiosk/kiosk_browser_2/settings/startup_url.txt`. The display 2 launcher targets `HDMI-A-2` when present.
 
 ---
 

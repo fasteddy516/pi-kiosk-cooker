@@ -335,13 +335,17 @@ chmod +x /home/$app_user/kiosk/session_start.sh
 
 # create local static app files and browser launchers
 su "$app_user" -c "mkdir -p ~/kiosk/kiosk_browser_1/profile ~/kiosk/kiosk_browser_1/settings ~/kiosk/kiosk_browser_2/profile ~/kiosk/kiosk_browser_2/settings"
-cat << 'EOF' > /home/$app_user/kiosk/kiosk_browser_1/index.html
+create_kiosk_browser_index() {
+  local browser_num="$1"
+  local settings_dir="~/kiosk/kiosk_browser_${browser_num}/settings"
+
+  cat << EOF > /home/$app_user/kiosk/kiosk_browser_${browser_num}/index.html
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Kiosk Browser 1</title>
+  <title>Kiosk Browser ${browser_num}</title>
   <style>
     :root {
       color-scheme: light;
@@ -459,8 +463,8 @@ cat << 'EOF' > /home/$app_user/kiosk/kiosk_browser_1/index.html
 </head>
 <body>
   <main>
-    <h1>Kiosk Browser 1 Ready</h1>
-    <p>This local startup page confirms the kiosk browser is running on display 1.</p>
+    <h1>Kiosk Browser ${browser_num} Ready</h1>
+    <p>This local startup page confirms the kiosk browser is running on display ${browser_num}.</p>
     <form id="set-start-page-form">
       <div class="url-row">
         <input id="start-url" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://example.com" aria-label="Start page URL">
@@ -468,7 +472,7 @@ cat << 'EOF' > /home/$app_user/kiosk/kiosk_browser_1/index.html
       </div>
       <div id="status" aria-live="polite"></div>
     </form>
-    <code>Enter the desired startup URL, press Set start page, then in the file picker open ~/kiosk/kiosk_browser_1/settings and press Open. To change it later, edit ~/kiosk/kiosk_browser_1/settings/startup_url.txt manually.</code>
+    <code>Enter the desired startup URL, press Set start page, then in the file picker open ${settings_dir} and press Open. To change it later, edit ${settings_dir}/startup_url.txt manually.</code>
   </main>
 
   <script>
@@ -488,7 +492,8 @@ cat << 'EOF' > /home/$app_user/kiosk/kiosk_browser_1/index.html
         return null;
       }
 
-      const prefixed = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmed) ? trimmed : `https://${trimmed}`;
+      const hasScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmed);
+      const prefixed = hasScheme ? trimmed : 'https://' + trimmed;
 
       try {
         const url = new URL(prefixed);
@@ -510,7 +515,7 @@ cat << 'EOF' > /home/$app_user/kiosk/kiosk_browser_1/index.html
       const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
       const fileHandle = await dirHandle.getFileHandle('startup_url.txt', { create: true });
       const writable = await fileHandle.createWritable();
-      await writable.write(`${url}\n`);
+      await writable.write(url + '\n');
       await writable.close();
     }
 
@@ -531,7 +536,7 @@ cat << 'EOF' > /home/$app_user/kiosk/kiosk_browser_1/index.html
         await writeStartupUrl(normalizedUrl);
         setStatus('Saved. Navigating now...', 'ok');
       } catch (error) {
-        setStatus(`Could not save startup_url.txt automatically: ${error.message} Navigating anyway.`, 'error');
+        setStatus('Could not save startup_url.txt automatically: ' + error.message + ' Navigating anyway.', 'error');
       }
 
       setTimeout(() => {
@@ -542,15 +547,23 @@ cat << 'EOF' > /home/$app_user/kiosk/kiosk_browser_1/index.html
 </body>
 </html>
 EOF
-chown $app_user:$app_user /home/$app_user/kiosk/kiosk_browser_1/index.html
 
-cat << 'EOF' > /home/$app_user/kiosk/kiosk_browser_1/launch_kiosk_browser_1.sh
+  chown $app_user:$app_user /home/$app_user/kiosk/kiosk_browser_${browser_num}/index.html
+}
+
+create_kiosk_browser_launcher() {
+  local browser_num="$1"
+  local output_name="$2"
+  local fallback_window_pos="$3"
+  local fallback_window_size="$4"
+
+  cat << EOF > /home/$app_user/kiosk/kiosk_browser_${browser_num}/launch_kiosk_browser_${browser_num}.sh
 #!/usr/bin/env bash
 set -euo pipefail
 
-export HOME="$HOME"
-export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
+export HOME="\$HOME"
+export XDG_RUNTIME_DIR="\${XDG_RUNTIME_DIR:-/run/user/\$(id -u)}"
+export WAYLAND_DISPLAY="\${WAYLAND_DISPLAY:-wayland-0}"
 export XDG_SESSION_TYPE="wayland"
 
 if command -v chromium-browser >/dev/null 2>&1; then
@@ -562,73 +575,73 @@ else
   exit 1
 fi
 
-APP_DIR="$HOME/kiosk/kiosk_browser_1"
-PROFILE_DIR="$APP_DIR/profile"
-URL_FILE="$APP_DIR/settings/startup_url.txt"
-DEFAULT_URL="file://$APP_DIR/index.html"
-START_URL="$DEFAULT_URL"
-OUTPUT_NAME="HDMI-A-1"
-FALLBACK_WINDOW_POS="0,0"
-FALLBACK_WINDOW_SIZE="1920,1080"
+APP_DIR="\$HOME/kiosk/kiosk_browser_${browser_num}"
+PROFILE_DIR="\$APP_DIR/profile"
+URL_FILE="\$APP_DIR/settings/startup_url.txt"
+DEFAULT_URL="file://\$APP_DIR/index.html"
+START_URL="\$DEFAULT_URL"
+OUTPUT_NAME="${output_name}"
+FALLBACK_WINDOW_POS="${fallback_window_pos}"
+FALLBACK_WINDOW_SIZE="${fallback_window_size}"
 
-if [ -f "$URL_FILE" ]; then
-  raw_url="$(head -n 1 "$URL_FILE" | tr -d '\r')"
+if [ -f "\$URL_FILE" ]; then
+  raw_url="\$(head -n 1 "\$URL_FILE" | tr -d '\r')"
 else
   raw_url=""
 fi
 
-if [ -n "$raw_url" ]; then
-  raw_url="$(echo "$raw_url" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
-  if [[ "$raw_url" =~ ^https?:// ]] || [[ "$raw_url" =~ ^file:// ]]; then
-    START_URL="$raw_url"
+if [ -n "\$raw_url" ]; then
+  raw_url="\$(echo "\$raw_url" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+\$//')"
+  if [[ "\$raw_url" =~ ^https?:// ]] || [[ "\$raw_url" =~ ^file:// ]]; then
+    START_URL="\$raw_url"
   else
-    echo "Ignoring invalid startup URL from settings file: '$raw_url'" >&2
+    echo "Ignoring invalid startup URL from settings file: '\$raw_url'" >&2
   fi
 fi
 
-mkdir -p "$PROFILE_DIR"
+mkdir -p "\$PROFILE_DIR"
 
 get_output_position() {
-  local output_name="$1"
+  local output_name="\$1"
   local pos
-  pos="$(wlr-randr 2>/dev/null | awk -v out="$output_name" '
-    $1 == out { in_out = 1; next }
-    in_out && $1 == "Position:" { print $2; exit }
-    in_out && /^[A-Za-z0-9_.-]+$/ { in_out = 0 }
+  pos="\$(wlr-randr 2>/dev/null | awk -v out="\$output_name" '
+    \$1 == out { in_out = 1; next }
+    in_out && \$1 == "Position:" { print \$2; exit }
+    in_out && /^[A-Za-z0-9_.-]+\$/ { in_out = 0 }
   ')"
-  if [[ "$pos" =~ ^[0-9]+,[0-9]+$ ]]; then
-    echo "$pos"
+  if [[ "\$pos" =~ ^[0-9]+,[0-9]+\$ ]]; then
+    echo "\$pos"
     return 0
   fi
   return 1
 }
 
 get_output_size() {
-  local output_name="$1"
+  local output_name="\$1"
   local mode
-  mode="$(wlr-randr 2>/dev/null | awk -v out="$output_name" '
-    $1 == out { in_out = 1; next }
-    in_out && $1 == "Current" && $2 == "mode:" { print $3; exit }
-    in_out && /^[A-Za-z0-9_.-]+$/ { in_out = 0 }
+  mode="\$(wlr-randr 2>/dev/null | awk -v out="\$output_name" '
+    \$1 == out { in_out = 1; next }
+    in_out && \$1 == "Current" && \$2 == "mode:" { print \$3; exit }
+    in_out && /^[A-Za-z0-9_.-]+\$/ { in_out = 0 }
   ')"
-  if [[ "$mode" =~ ^[0-9]+x[0-9]+$ ]]; then
-    echo "${mode/x/,}"
+  if [[ "\$mode" =~ ^[0-9]+x[0-9]+\$ ]]; then
+    echo "\${mode/x/,}"
     return 0
   fi
   return 1
 }
 
-WINDOW_POS="$FALLBACK_WINDOW_POS"
-if resolved_pos="$(get_output_position "$OUTPUT_NAME")"; then
-  WINDOW_POS="$resolved_pos"
+WINDOW_POS="\$FALLBACK_WINDOW_POS"
+if resolved_pos="\$(get_output_position "\$OUTPUT_NAME")"; then
+  WINDOW_POS="\$resolved_pos"
 fi
 
-WINDOW_SIZE="$FALLBACK_WINDOW_SIZE"
-if resolved_size="$(get_output_size "$OUTPUT_NAME")"; then
-  WINDOW_SIZE="$resolved_size"
+WINDOW_SIZE="\$FALLBACK_WINDOW_SIZE"
+if resolved_size="\$(get_output_size "\$OUTPUT_NAME")"; then
+  WINDOW_SIZE="\$resolved_size"
 fi
 
-exec "$BROWSER_BIN" \
+exec "\$BROWSER_BIN" \
   --ozone-platform=wayland \
   --enable-features=UseOzonePlatform,VirtualKeyboard,WaylandWindowDecorations,WebContentsForceDark \
   --disable-features=Translate,MediaRouter,AutofillServerCommunication \
@@ -636,161 +649,27 @@ exec "$BROWSER_BIN" \
   --enable-virtual-keyboard \
   --force-dark-mode \
   --touch-events=enabled \
-  --app="$START_URL" \
-  --window-position="$WINDOW_POS" \
-  --window-size="$WINDOW_SIZE" \
+  --app="\$START_URL" \
+  --window-position="\$WINDOW_POS" \
+  --window-size="\$WINDOW_SIZE" \
   --start-maximized \
   --no-first-run \
   --no-default-browser-check \
   --disable-session-crashed-bubble \
   --disable-infobars \
   --check-for-update-interval=31536000 \
-  --user-data-dir="$PROFILE_DIR"
+  --user-data-dir="\$PROFILE_DIR"
 EOF
-chown $app_user:$app_user /home/$app_user/kiosk/kiosk_browser_1/launch_kiosk_browser_1.sh
-chmod +x /home/$app_user/kiosk/kiosk_browser_1/launch_kiosk_browser_1.sh
 
-cat << 'EOF' > /home/$app_user/kiosk/kiosk_browser_2/index.html
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Kiosk Browser 2</title>
-  <style>
-    body {
-      margin: 0;
-      min-height: 100vh;
-      display: grid;
-      place-items: center;
-      font-family: "Noto Sans", "Segoe UI", sans-serif;
-      background: #f2f6ff;
-      color: #1b2b49;
-    }
-    main {
-      padding: 2rem;
-      text-align: center;
-      background: #ffffff;
-      border-radius: 1rem;
-      box-shadow: 0 1rem 2.5rem rgba(18, 33, 61, 0.15);
-    }
-  </style>
-</head>
-<body>
-  <main>
-    <h1>Kiosk Browser 2 Scaffold</h1>
-    <p>This page is ready for an independent display-2 service when enabled.</p>
-  </main>
-</body>
-</html>
-EOF
-chown $app_user:$app_user /home/$app_user/kiosk/kiosk_browser_2/index.html
-
-cat << 'EOF' > /home/$app_user/kiosk/kiosk_browser_2/launch_kiosk_browser_2.sh
-#!/usr/bin/env bash
-set -euo pipefail
-
-export HOME="$HOME"
-export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
-export XDG_SESSION_TYPE="wayland"
-
-if command -v chromium-browser >/dev/null 2>&1; then
-  BROWSER_BIN="chromium-browser"
-elif command -v chromium >/dev/null 2>&1; then
-  BROWSER_BIN="chromium"
-else
-  echo "No Chromium browser binary found" >&2
-  exit 1
-fi
-
-APP_DIR="$HOME/kiosk/kiosk_browser_2"
-PROFILE_DIR="$APP_DIR/profile"
-URL_FILE="$APP_DIR/settings/startup_url.txt"
-DEFAULT_URL="file://$APP_DIR/index.html"
-START_URL="$DEFAULT_URL"
-OUTPUT_NAME="HDMI-A-2"
-FALLBACK_WINDOW_POS="1920,0"
-FALLBACK_WINDOW_SIZE="1920,1080"
-
-if [ -f "$URL_FILE" ]; then
-  raw_url="$(head -n 1 "$URL_FILE" | tr -d '\r')"
-else
-  raw_url=""
-fi
-
-if [ -n "$raw_url" ]; then
-  raw_url="$(echo "$raw_url" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
-  if [[ "$raw_url" =~ ^https?:// ]] || [[ "$raw_url" =~ ^file:// ]]; then
-    START_URL="$raw_url"
-  else
-    echo "Ignoring invalid startup URL from settings file: '$raw_url'" >&2
-  fi
-fi
-
-mkdir -p "$PROFILE_DIR"
-
-get_output_position() {
-  local output_name="$1"
-  local pos
-  pos="$(wlr-randr 2>/dev/null | awk -v out="$output_name" '
-    $1 == out { in_out = 1; next }
-    in_out && $1 == "Position:" { print $2; exit }
-    in_out && /^[A-Za-z0-9_.-]+$/ { in_out = 0 }
-  ')"
-  if [[ "$pos" =~ ^[0-9]+,[0-9]+$ ]]; then
-    echo "$pos"
-    return 0
-  fi
-  return 1
+  chown $app_user:$app_user /home/$app_user/kiosk/kiosk_browser_${browser_num}/launch_kiosk_browser_${browser_num}.sh
+  chmod +x /home/$app_user/kiosk/kiosk_browser_${browser_num}/launch_kiosk_browser_${browser_num}.sh
 }
 
-get_output_size() {
-  local output_name="$1"
-  local mode
-  mode="$(wlr-randr 2>/dev/null | awk -v out="$output_name" '
-    $1 == out { in_out = 1; next }
-    in_out && $1 == "Current" && $2 == "mode:" { print $3; exit }
-    in_out && /^[A-Za-z0-9_.-]+$/ { in_out = 0 }
-  ')"
-  if [[ "$mode" =~ ^[0-9]+x[0-9]+$ ]]; then
-    echo "${mode/x/,}"
-    return 0
-  fi
-  return 1
-}
+create_kiosk_browser_index 1
+create_kiosk_browser_index 2
 
-WINDOW_POS="$FALLBACK_WINDOW_POS"
-if resolved_pos="$(get_output_position "$OUTPUT_NAME")"; then
-  WINDOW_POS="$resolved_pos"
-fi
-
-WINDOW_SIZE="$FALLBACK_WINDOW_SIZE"
-if resolved_size="$(get_output_size "$OUTPUT_NAME")"; then
-  WINDOW_SIZE="$resolved_size"
-fi
-
-exec "$BROWSER_BIN" \
-  --ozone-platform=wayland \
-  --enable-features=UseOzonePlatform,VirtualKeyboard,WaylandWindowDecorations,WebContentsForceDark \
-  --disable-features=Translate,MediaRouter,AutofillServerCommunication \
-  --enable-wayland-ime \
-  --enable-virtual-keyboard \
-  --force-dark-mode \
-  --touch-events=enabled \
-  --app="$START_URL" \
-  --window-position="$WINDOW_POS" \
-  --window-size="$WINDOW_SIZE" \
-  --start-maximized \
-  --no-first-run \
-  --no-default-browser-check \
-  --disable-session-crashed-bubble \
-  --disable-infobars \
-  --check-for-update-interval=31536000 \
-  --user-data-dir="$PROFILE_DIR"
-EOF
-chown $app_user:$app_user /home/$app_user/kiosk/kiosk_browser_2/launch_kiosk_browser_2.sh
-chmod +x /home/$app_user/kiosk/kiosk_browser_2/launch_kiosk_browser_2.sh
+create_kiosk_browser_launcher 1 "HDMI-A-1" "0,0" "1920,1080"
+create_kiosk_browser_launcher 2 "HDMI-A-2" "1920,0" "1920,1080"
 
 # create wait-for-gui-ready script to ensure the compositor is ready before starting the kiosk application
 cat << EOF > /usr/local/bin/wait-for-gui-ready
@@ -1025,10 +904,11 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 EOF
 
-# create browser service to run fullscreen kiosk browser on display 1
-cat << EOF > /etc/systemd/system/kiosk_browser_1.service
+create_kiosk_browser_service() {
+  local browser_num="$1"
+  cat << EOF > /etc/systemd/system/kiosk_browser_${browser_num}.service
 [Unit]
-Description=Kiosk browser on display 1
+Description=Kiosk browser on display $browser_num
 Requires=kiosk-ui-init.service
 After=kiosk-ui-init.service
 
@@ -1039,35 +919,18 @@ Group=$app_user
 WorkingDirectory=/home/$app_user
 Environment=HOME=/home/$app_user
 $wayland_client_env
-ExecStart=/home/$app_user/kiosk/kiosk_browser_1/launch_kiosk_browser_1.sh
+ExecStart=/home/$app_user/kiosk/kiosk_browser_${browser_num}/launch_kiosk_browser_${browser_num}.sh
 Restart=always
 RestartSec=2
 
 [Install]
 WantedBy=multi-user.target
 EOF
+}
 
-# create browser service scaffold for display 2 (not enabled by default)
-cat << EOF > /etc/systemd/system/kiosk_browser_2.service
-[Unit]
-Description=Kiosk browser on display 2
-Requires=kiosk-ui-init.service
-After=kiosk-ui-init.service
-
-[Service]
-Type=simple
-User=$app_user
-Group=$app_user
-WorkingDirectory=/home/$app_user
-Environment=HOME=/home/$app_user
-$wayland_client_env
-ExecStart=/home/$app_user/kiosk/kiosk_browser_2/launch_kiosk_browser_2.sh
-Restart=always
-RestartSec=2
-
-[Install]
-WantedBy=multi-user.target
-EOF
+# create browser services for display 1 and display 2
+create_kiosk_browser_service 1
+create_kiosk_browser_service 2
 
 # finish setting up systemd services and targets
 systemctl daemon-reload
