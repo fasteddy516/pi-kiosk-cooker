@@ -3,10 +3,184 @@
 # kiosk_cooker version (used by script and generated UI text)
 SCRIPT_VERSION="0.9.0"
 
+supports_color=0
+if [ -t 1 ] && [ -n "${TERM:-}" ] && [ "${TERM}" != "dumb" ]; then
+  supports_color=1
+fi
+
+if [ "$supports_color" -eq 1 ]; then
+  C_GREEN='\033[32m'
+  C_RED='\033[31m'
+  C_YELLOW='\033[93m'
+  C_WHITE='\033[37m'
+  C_BRIGHT_WHITE='\033[97m'
+  C_LIGHT_BLUE='\033[94m'
+  C_RESET='\033[0m'
+else
+  C_GREEN=''
+  C_RED=''
+  C_YELLOW=''
+  C_WHITE=''
+  C_BRIGHT_WHITE=''
+  C_LIGHT_BLUE=''
+  C_RESET=''
+fi
+
+CHECKMARK="${C_GREEN}✓${C_RESET}"
+CROSSMARK="${C_RED}x${C_RESET}"
+OK_TEXT="${C_GREEN}OK${C_RESET}"
+ERROR_TEXT="${C_RED}ERROR${C_RESET}"
+CURRENT_STEP=""
+LAST_COMMAND=""
+LAST_EXIT_CODE=0
+COMMAND_STDOUT_LOG=""
+COMMAND_STDERR_LOG=""
+
+print_line() {
+  printf '%b\n' "$1"
+}
+
+init_command_logs() {
+  COMMAND_STDOUT_LOG="$(mktemp /tmp/pi-kiosk-cooker-stdout.XXXXXX)" || return 1
+  COMMAND_STDERR_LOG="$(mktemp /tmp/pi-kiosk-cooker-stderr.XXXXXX)" || return 1
+}
+
+cleanup_command_logs() {
+  [ -n "$COMMAND_STDOUT_LOG" ] && [ -f "$COMMAND_STDOUT_LOG" ] && rm -f "$COMMAND_STDOUT_LOG"
+  [ -n "$COMMAND_STDERR_LOG" ] && [ -f "$COMMAND_STDERR_LOG" ] && rm -f "$COMMAND_STDERR_LOG"
+}
+
+run_quiet() {
+  LAST_COMMAND="$*"
+  LAST_EXIT_CODE=0
+  : > "$COMMAND_STDOUT_LOG"
+  : > "$COMMAND_STDERR_LOG"
+  "$@" >"$COMMAND_STDOUT_LOG" 2>"$COMMAND_STDERR_LOG"
+  LAST_EXIT_CODE=$?
+  return $LAST_EXIT_CODE
+}
+
+print_log_preview() {
+  local label="$1"
+  local file="$2"
+  local max_lines=8
+  local count=0
+
+  if [ ! -s "$file" ]; then
+    return
+  fi
+
+  print_line "    ! ${label}:"
+  while IFS= read -r line && [ "$count" -lt "$max_lines" ]; do
+    printf '      %s\n' "$line"
+    count=$((count + 1))
+  done < "$file"
+}
+
+print_last_command_hint() {
+  local stderr_has_data=0
+  local stdout_has_data=0
+
+  if [ -n "$LAST_COMMAND" ]; then
+    print_line "    ! command: $LAST_COMMAND"
+  fi
+  print_line "    ! exit code: $LAST_EXIT_CODE"
+  if [ -n "$COMMAND_STDOUT_LOG" ] || [ -n "$COMMAND_STDERR_LOG" ]; then
+    print_line "    ! logs: stdout=$COMMAND_STDOUT_LOG stderr=$COMMAND_STDERR_LOG"
+  fi
+
+  if [ -s "$COMMAND_STDERR_LOG" ]; then
+    stderr_has_data=1
+  fi
+  if [ -s "$COMMAND_STDOUT_LOG" ]; then
+    stdout_has_data=1
+  fi
+
+  print_log_preview "stderr" "$COMMAND_STDERR_LOG"
+  if [ "$stderr_has_data" -eq 0 ]; then
+    print_log_preview "stdout" "$COMMAND_STDOUT_LOG"
+  fi
+
+  if [ "$stderr_has_data" -eq 0 ] && [ "$stdout_has_data" -eq 0 ]; then
+    print_line "    ! no stdout/stderr was captured for this command"
+    case "$LAST_COMMAND" in
+      raspi-config*)
+        print_line "    ! hint: raspi-config can fail silently in non-interactive mode on non-Raspberry Pi OS images or when required boot files/settings are unavailable"
+        ;;
+    esac
+  fi
+}
+
+fail() {
+  print_line "! $1"
+  exit 1
+}
+
+step_begin() {
+  CURRENT_STEP="$1"
+  LAST_COMMAND=""
+  printf '[ ] %s' "$CURRENT_STEP"
+}
+
+step_ok() {
+  printf '\r[%b] %s %b\n' "$CHECKMARK" "$CURRENT_STEP" "$OK_TEXT"
+  CURRENT_STEP=""
+}
+
+step_error() {
+  local message="${1:-}"
+  printf '\r[%b] %s %b\n' "$CROSSMARK" "$CURRENT_STEP" "$ERROR_TEXT"
+  if [ -n "$message" ]; then
+    print_line "    ! $message"
+  fi
+  print_last_command_hint
+  exit 1
+}
+
+step_error_continue() {
+  local message="${1:-}"
+  printf '\r[%b] %s %b\n' "$CROSSMARK" "$CURRENT_STEP" "$ERROR_TEXT"
+  if [ -n "$message" ]; then
+    print_line "    ! $message"
+  fi
+  print_last_command_hint
+  CURRENT_STEP=""
+}
+
+run_step() {
+  local text="$1"
+  shift
+
+  step_begin "$text"
+  if run_quiet "$@"; then
+    step_ok
+  else
+    step_error
+  fi
+}
+
+run_step_allow_nonzero() {
+  local text="$1"
+  shift
+
+  step_begin "$text"
+  if run_quiet "$@"; then
+    step_ok
+  else
+    step_ok
+    print_line "    ${C_YELLOW}! note: ignored non-zero exit code $LAST_EXIT_CODE from: $LAST_COMMAND${C_RESET}"
+  fi
+}
+
+print_line "${C_RED}🔥${C_RESET}${C_LIGHT_BLUE} pi-kiosk-cooker ${SCRIPT_VERSION} by fasteddy516${C_RESET}"
+
 # ensure the script is being run as root
 if [ "$(id -u)" -ne 0 ]; then
-  echo "! This script must be run as root (i.e. with sudo)"
-  exit
+  fail "This script must be run as root (i.e. with sudo)"
+fi
+
+if ! init_command_logs; then
+  fail "Unable to create temporary command log files under /tmp"
 fi
 
 # suppress interactive prompts from apt/dpkg for the duration of this script
@@ -49,13 +223,14 @@ fi
 cli_args=("$@")
 memory_file="$(dirname "$(realpath "$0")")/kiosk_cooker.memory"
 if [ -f "$memory_file" ]; then
-  echo "* Loading remembered arguments from $memory_file"
+  step_begin "Loading remembered arguments from $memory_file"
   # read saved args and prepend them; explicit CLI args come after and win
   saved_args=()
   while IFS= read -r line || [ -n "$line" ]; do
     [ -n "$line" ] && saved_args+=("$line")
   done < "$memory_file"
   set -- "${saved_args[@]}" "$@"
+  step_ok
 fi
 
 # process command-line arguments
@@ -71,8 +246,7 @@ for arg in "$@"; do
     --displays=*)
       displays="${arg#*=}"
       if [ "$displays" != "1" ] && [ "$displays" != "2" ]; then
-        echo "! Invalid value for --displays: '$displays' (must be 1 or 2)"
-        exit 1
+        fail "Invalid value for --displays: '$displays' (must be 1 or 2)"
       fi
       ;;
     --edid=*)
@@ -91,40 +265,45 @@ for arg in "$@"; do
       remember=1
       ;;
     *)
-      echo "! Unknown argument: '$arg'"
-      exit 1
+      fail "Unknown argument: '$arg'"
       ;;
   esac
 done
 
 # require a non-empty password to be explicitly provided
 if [ -z "${app_password:-}" ]; then
-  echo "! Missing required argument: --password=<password>"
-  exit 1
+  fail "Missing required argument: --password=<password>"
 fi
 
 # write remembered arguments (all args except --remember itself)
 if [ $remember -eq 1 ]; then
+  step_begin "Saving remembered arguments to $memory_file"
   saved=()
   for arg in "${cli_args[@]}"; do
     [ "$arg" != "--remember" ] && saved+=("$arg")
   done
-  printf '%s\n' "${saved[@]}" > "$memory_file"
-  echo "* Arguments saved to $memory_file"
+  if printf '%s\n' "${saved[@]}" > "$memory_file"; then
+    step_ok
+  else
+    step_error "Unable to write remembered arguments"
+  fi
 fi
 
 # download specified edid file (if any) before making any system changes
 if [ "$edid" != "none" ]; then
-  echo "* Downloading EDID file '${edid}.edid'..."
-  if ! wget -q "https://github.com/fasteddy516/pi-kiosk-cooker/raw/main/edid/${edid}.edid"; then
-    echo "! Failed to download EDID file '${edid}.edid' - aborting"
-    exit 1
+  step_begin "Downloading EDID file '${edid}.edid'"
+  if run_quiet wget -q "https://github.com/fasteddy516/pi-kiosk-cooker/raw/main/edid/${edid}.edid"; then
+    step_ok
+  else
+    step_error "Failed to download EDID file '${edid}.edid'"
   fi
 fi
 
 # update installed packages
-apt update
-apt upgrade -y
+run_step "Updating apt package lists (this may take a few minutes)" apt update
+run_step "Upgrading installed packages (this may take a few minutes)" apt upgrade -y
+
+step_begin "Selecting Chromium package"
 browser_package=""
 for candidate in chromium-browser chromium; do
   candidate_version="$(apt-cache policy "$candidate" 2>/dev/null | awk '/Candidate:/ {print $2; exit}')"
@@ -134,23 +313,24 @@ for candidate in chromium-browser chromium; do
   fi
 done
 if [ -z "$browser_package" ]; then
-  echo "! Unable to find a supported Chromium package (tried: chromium-browser, chromium)"
-  exit 1
+  step_error "Unable to find a supported Chromium package (tried: chromium-browser, chromium)"
 fi
-echo "* Using browser package: $browser_package"
+step_ok
 
 if [ $touch_keyboard -eq 1 ]; then
+  step_begin "Checking touch keyboard package availability"
   squeekboard_version="$(apt-cache policy squeekboard 2>/dev/null | awk '/Candidate:/ {print $2; exit}')"
   if [ -n "$squeekboard_version" ] && [ "$squeekboard_version" != "(none)" ]; then
     touch_keyboard_package="squeekboard"
-    echo "* Using touch keyboard package: squeekboard"
+    step_ok
   else
     touch_keyboard_package=""
-    echo "! squeekboard not found in apt repos - touch keyboard will not be available"
+    step_error_continue "squeekboard not found in apt repos - touch keyboard will not be available"
   fi
 else
   touch_keyboard_package=""
-  echo "* Touch keyboard disabled via --no-touch-keyboard"
+  step_begin "Touch keyboard disabled via --no-touch-keyboard"
+  step_ok
 fi
 
 kiosk_packages="labwc wlr-randr wayland-protocols xwayland dbus-user-session seatd $browser_package"
@@ -160,26 +340,26 @@ fi
 if [ $rpi_connect -eq 1 ]; then
   kiosk_packages="$kiosk_packages rpi-connect"
 fi
-apt install -y $kiosk_packages
+run_step "Installing required packages (this may take a few minutes)" apt install -y $kiosk_packages
 
 # remove orphaned packages
-apt autoremove -y
+run_step "Removing orphaned packages (this may take a few minutes)" apt autoremove -y
 
 # disable splash screen (1 = disabled)
-raspi-config nonint do_boot_splash 1
+run_step_allow_nonzero "Disabling boot splash" raspi-config nonint do_boot_splash 1
 
 # disable overscan for active hdmi outputs
-raspi-config nonint do_overscan_kms 1 1
+run_step_allow_nonzero "Disabling overscan on HDMI-A-1" raspi-config nonint do_overscan_kms 1 1
 if [ $displays -eq 2 ]; then
-  raspi-config nonint do_overscan_kms 2 1
+  run_step_allow_nonzero "Disabling overscan on HDMI-A-2" raspi-config nonint do_overscan_kms 2 1
 fi
 
 # disable screen blanking
-raspi-config nonint do_blanking 1
+run_step_allow_nonzero "Disabling screen blanking" raspi-config nonint do_blanking 1
 
 # install edid file if specified
 if [ "$edid" != "none" ]; then
-  mv "./${edid}.edid" /lib/firmware/${edid}.edid
+  run_step "Installing EDID firmware file" mv "./${edid}.edid" /lib/firmware/${edid}.edid
 fi
 
 # Read current cmdline configuration
@@ -218,15 +398,23 @@ vc4.force_hotplug=0x01"
 fi
 
 # write the updated cmdline back to the file
-echo "$cmdline" > /boot/firmware/cmdline.txt
+step_begin "Writing boot cmdline configuration"
+if echo "$cmdline" > /boot/firmware/cmdline.txt; then
+  step_ok
+else
+  step_error "Unable to write /boot/firmware/cmdline.txt"
+fi
 
 # create default application user if necessary
-grep "^$app_user:" /etc/passwd > /dev/null
-if [ $? -ne 0 ]; then
-  echo "User '$app_user' does not exist and will be created"
-  useradd -s /bin/bash -p "$(openssl passwd -6 "$app_password")" $app_user --create-home
-else  
-  echo "User '$app_user' already exists"
+step_begin "Ensuring user '$app_user' exists"
+if grep "^$app_user:" /etc/passwd > /dev/null 2>&1; then
+  step_ok
+else
+  if run_quiet useradd -s /bin/bash -p "$(openssl passwd -6 "$app_password")" "$app_user" --create-home; then
+    step_ok
+  else
+    step_error "Failed to create user '$app_user'"
+  fi
 fi
 
 # add kiosk user to required supplemental groups that exist on this OS
@@ -238,39 +426,58 @@ for group_name in $desired_groups; do
   fi
 done
 if [ -n "$available_groups" ]; then
-  usermod -aG "$available_groups" "$app_user"
+  run_step "Adding '$app_user' to supplemental groups: $available_groups" usermod -aG "$available_groups" "$app_user"
+else
+  step_begin "No supplemental kiosk groups found to add"
+  step_ok
 fi
 
 app_uid=$(id -u "$app_user")
 
 # enable seatd for Wayland compositor seat management
-systemctl enable seatd
+run_step "Enabling seatd service" systemctl enable seatd
 
 # disable getty on tty1 to prevent interference with the kiosk compositor session
-systemctl disable getty@tty1.service
+run_step "Disabling getty on tty1" systemctl disable getty@tty1.service
 
 # create compositor/session startup files
-su "$app_user" -c "mkdir -p ~/.config ~/kiosk"
-loginctl enable-linger "$app_user" || true
+run_step "Creating kiosk config directories" su "$app_user" -c "mkdir -p ~/.config ~/kiosk"
+step_begin "Enabling linger for '$app_user'"
+if run_quiet loginctl enable-linger "$app_user"; then
+  step_ok
+else
+  step_error_continue "Could not enable linger for '$app_user'"
+fi
 if [ $rpi_connect -eq 1 ]; then
   # Ensure a user manager exists now so user services can be started before first login.
-  systemctl start "user@$app_uid.service" >/dev/null 2>&1 || true
+  step_begin "Starting user manager for '$app_user'"
+  if run_quiet systemctl start "user@$app_uid.service"; then
+    step_ok
+  else
+    step_error_continue "Could not start user@$app_uid.service right now"
+  fi
 fi
 
 # set system-wide dark mode preference for GTK apps (including squeekboard)
-su "$app_user" -c "gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'" 2>/dev/null || true
+step_begin "Setting GTK dark mode preference"
+if run_quiet su "$app_user" -c "gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'"; then
+  step_ok
+else
+  step_error_continue "Could not apply GTK dark mode preference"
+fi
 if [ $rpi_connect -eq 1 ]; then
-  echo "* Enabling Raspberry Pi Connect user services"
+  step_begin "Enabling Raspberry Pi Connect user services"
   if [ -f /usr/lib/systemd/user/rpi-connect.service ]; then
-    systemctl --global enable rpi-connect.service
+    systemctl --global enable rpi-connect.service >/dev/null 2>&1 || true
   fi
   if [ -f /usr/lib/systemd/user/rpi-connect-wayvnc.service ]; then
-    systemctl --global enable rpi-connect-wayvnc.service
+    systemctl --global enable rpi-connect-wayvnc.service >/dev/null 2>&1 || true
   fi
   if [ -f /usr/lib/systemd/user/rpi-connect-signin.path ]; then
-    systemctl --global enable rpi-connect-signin.path
+    systemctl --global enable rpi-connect-signin.path >/dev/null 2>&1 || true
   fi
   su "$app_user" -c "XDG_RUNTIME_DIR=/run/user/$app_uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$app_uid/bus systemctl --user start rpi-connect.service rpi-connect-wayvnc.service rpi-connect-signin.path" >/dev/null 2>&1 || true
+  step_ok
   labwc_connect_autostart=$(cat <<'EOF'
 
 # Keep user systemd/dbus environment aligned with this Wayland session.
@@ -282,13 +489,15 @@ systemctl --user restart rpi-connect-wayvnc.service >/dev/null 2>&1 || true
 EOF
 )
 else
-  echo "* Disabling Raspberry Pi Connect user services"
+  step_begin "Disabling Raspberry Pi Connect user services"
   systemctl --global disable rpi-connect.service >/dev/null 2>&1 || true
   systemctl --global disable rpi-connect-wayvnc.service >/dev/null 2>&1 || true
   systemctl --global disable rpi-connect-signin.path >/dev/null 2>&1 || true
+  step_ok
   labwc_connect_autostart=""
 fi
-su "$app_user" -c "mkdir -p ~/.config/labwc"
+run_step "Creating labwc config directory" su "$app_user" -c "mkdir -p ~/.config/labwc"
+step_begin "Writing labwc rc.xml"
 cat << 'EOF' > /home/$app_user/.config/labwc/rc.xml
 <?xml version="1.0"?>
 <labwc_config>
@@ -306,23 +515,29 @@ cat << 'EOF' > /home/$app_user/.config/labwc/rc.xml
   </windowRules>
 </labwc_config>
 EOF
-chown $app_user:$app_user /home/$app_user/.config/labwc/rc.xml
+step_ok
 # Create a zero-size labwc theme so even if SSD is applied it renders invisibly
-su "$app_user" -c "mkdir -p ~/.local/share/themes/kiosk/openbox-3"
+run_step "Setting ownership for labwc config" chown "$app_user:$app_user" "/home/$app_user/.config/labwc/rc.xml"
+run_step "Creating kiosk theme directory" su "$app_user" -c "mkdir -p ~/.local/share/themes/kiosk/openbox-3"
+step_begin "Writing kiosk theme configuration"
 cat << 'EOF' > /home/$app_user/.local/share/themes/kiosk/openbox-3/themerc
 border.width: 0
 padding.width: 0
 padding.height: 0
 titlebar.height: 0
 EOF
-chown -R $app_user:$app_user /home/$app_user/.local/share/themes
+step_ok
+run_step "Setting ownership for kiosk theme files" chown -R "$app_user:$app_user" "/home/$app_user/.local/share/themes"
+step_begin "Writing labwc autostart script"
 cat << EOF > /home/$app_user/.config/labwc/autostart
 #!/bin/sh
 $labwc_connect_autostart
 EOF
-chown $app_user:$app_user /home/$app_user/.config/labwc/autostart
-chmod +x /home/$app_user/.config/labwc/autostart
+step_ok
+run_step "Setting labwc autostart ownership" chown "$app_user:$app_user" "/home/$app_user/.config/labwc/autostart"
+run_step "Making labwc autostart executable" chmod +x "/home/$app_user/.config/labwc/autostart"
 
+step_begin "Writing kiosk session launcher"
 cat << EOF > /home/$app_user/kiosk/session_start.sh
 #!/bin/sh
 set -eu
@@ -347,11 +562,12 @@ fi
 
 exec dbus-run-session -- labwc
 EOF
-chown $app_user:$app_user /home/$app_user/kiosk/session_start.sh
-chmod +x /home/$app_user/kiosk/session_start.sh
+step_ok
+run_step "Setting session launcher ownership" chown "$app_user:$app_user" "/home/$app_user/kiosk/session_start.sh"
+run_step "Making session launcher executable" chmod +x "/home/$app_user/kiosk/session_start.sh"
 
 # create local static app files and browser launchers
-su "$app_user" -c "mkdir -p ~/kiosk/kiosk_browser_1/profile ~/kiosk/kiosk_browser_1/settings ~/kiosk/kiosk_browser_2/profile ~/kiosk/kiosk_browser_2/settings"
+run_step "Creating browser profile/settings directories" su "$app_user" -c "mkdir -p ~/kiosk/kiosk_browser_1/profile ~/kiosk/kiosk_browser_1/settings ~/kiosk/kiosk_browser_2/profile ~/kiosk/kiosk_browser_2/settings"
 create_kiosk_browser_index() {
   local browser_num="$1"
   local settings_dir="~/kiosk/kiosk_browser_${browser_num}/settings"
@@ -835,13 +1051,14 @@ EOF
   chmod +x /home/$app_user/kiosk/kiosk_browser_${browser_num}/launch_kiosk_browser_${browser_num}.sh
 }
 
-create_kiosk_browser_index 1 250
-create_kiosk_browser_index 2 160
+run_step "Generating browser 1 local start page" create_kiosk_browser_index 1 250
+run_step "Generating browser 2 local start page" create_kiosk_browser_index 2 160
 
-create_kiosk_browser_launcher 1 "HDMI-A-1" "0,0" "1920,1080"
-create_kiosk_browser_launcher 2 "HDMI-A-2" "1920,0" "1920,1080"
+run_step "Generating browser 1 launcher" create_kiosk_browser_launcher 1 "HDMI-A-1" "0,0" "1920,1080"
+run_step "Generating browser 2 launcher" create_kiosk_browser_launcher 2 "HDMI-A-2" "1920,0" "1920,1080"
 
 # create wait-for-gui-ready script to ensure the compositor is ready before starting the kiosk application
+step_begin "Writing wait-for-gui-ready helper"
 cat << EOF > /usr/local/bin/wait-for-gui-ready
 #!/usr/bin/env bash
 set -euo pipefail
@@ -863,7 +1080,8 @@ done
 echo "Wayland did not become ready in time" >&2
 exit 1
 EOF
-chmod +x /usr/local/bin/wait-for-gui-ready
+step_ok
+run_step "Making wait-for-gui-ready executable" chmod +x /usr/local/bin/wait-for-gui-ready
 
 # create kiosk-ui-init script to set up display layout after the compositor is ready
 if [ "$edid" != "none" ]; then
@@ -874,6 +1092,7 @@ else
   kiosk_mode=""
 fi
 kiosk_num_displays=$displays
+step_begin "Writing kiosk-ui-init helper"
 cat <<EOF | tee /usr/local/bin/kiosk-ui-init >/dev/null
 #!/usr/bin/env bash
 set -euo pipefail
@@ -983,7 +1202,8 @@ main() {
 
 main "\$@"
 EOF
-chmod +x /usr/local/bin/kiosk-ui-init
+step_ok
+run_step "Making kiosk-ui-init executable" chmod +x /usr/local/bin/kiosk-ui-init
 session_service_env=$(cat <<EOF
 Environment=XDG_RUNTIME_DIR=/run/user/$app_uid
 Environment=XDG_SESSION_TYPE=wayland
@@ -1002,6 +1222,7 @@ session_ready_desc="Wayland"
 ui_init_desc="wlr-randr"
 
 # add kiosk-session.service to start the graphical session on tty1 at boot
+step_begin "Writing kiosk-session.service"
 cat << EOF > /etc/systemd/system/kiosk-session.service
 [Unit]
 Description=Kiosk graphical session on tty1
@@ -1032,8 +1253,10 @@ RestartSec=2
 [Install]
 WantedBy=multi-user.target
 EOF
+step_ok
 
 # create systemd service to wait for the compositor session to become ready
+step_begin "Writing kiosk-session-ready.service"
 cat << EOF > /etc/systemd/system/kiosk-session-ready.service
 [Unit]
 Description=Wait for kiosk $session_ready_desc session to be ready
@@ -1052,9 +1275,11 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 EOF
+step_ok
 
 # create systemd service for the on-screen touch keyboard (if applicable)
 if [ -n "$touch_keyboard_package" ]; then
+  step_begin "Writing kiosk-touch-keyboard.service"
   cat << EOF > /etc/systemd/system/kiosk-touch-keyboard.service
 [Unit]
 Description=Kiosk on-screen touch keyboard
@@ -1075,9 +1300,11 @@ RestartSec=2
 [Install]
 WantedBy=multi-user.target
 EOF
+  step_ok
 fi
 
 # create systemd service to set up display layout after the session is ready
+step_begin "Writing kiosk-ui-init.service"
 cat << EOF > /etc/systemd/system/kiosk-ui-init.service
 [Unit]
 Description=Initialize kiosk display layout ($ui_init_desc)
@@ -1097,6 +1324,7 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 EOF
+step_ok
 
 create_kiosk_browser_service() {
   local browser_num="$1"
@@ -1123,47 +1351,57 @@ EOF
 }
 
 # create browser services for display 1 and display 2
-create_kiosk_browser_service 1
-create_kiosk_browser_service 2
+run_step "Writing kiosk_browser_1.service" create_kiosk_browser_service 1
+run_step "Writing kiosk_browser_2.service" create_kiosk_browser_service 2
 
 # finish setting up systemd services and targets
-systemctl daemon-reload
-systemctl enable kiosk-session.service
-systemctl enable kiosk-session-ready.service
-systemctl enable kiosk-ui-init.service
+run_step "Reloading systemd daemon" systemctl daemon-reload
+run_step "Enabling kiosk-session.service" systemctl enable kiosk-session.service
+run_step "Enabling kiosk-session-ready.service" systemctl enable kiosk-session-ready.service
+run_step "Enabling kiosk-ui-init.service" systemctl enable kiosk-ui-init.service
 if [ -n "$touch_keyboard_package" ]; then
-  systemctl enable kiosk-touch-keyboard.service
+  run_step "Enabling kiosk-touch-keyboard.service" systemctl enable kiosk-touch-keyboard.service
 else
-  systemctl disable --now kiosk-touch-keyboard.service >/dev/null 2>&1 || true
+  step_begin "Disabling kiosk-touch-keyboard.service"
+  if run_quiet systemctl disable --now kiosk-touch-keyboard.service; then
+    step_ok
+  else
+    step_error_continue "kiosk-touch-keyboard.service was not present or could not be disabled"
+  fi
 fi
-systemctl enable kiosk_browser_1.service
+run_step "Enabling kiosk_browser_1.service" systemctl enable kiosk_browser_1.service
 if [ "$displays" -eq 2 ]; then
-  systemctl enable kiosk_browser_2.service
+  run_step "Enabling kiosk_browser_2.service" systemctl enable kiosk_browser_2.service
 else
-  systemctl disable --now kiosk_browser_2.service >/dev/null 2>&1 || true
+  step_begin "Disabling kiosk_browser_2.service"
+  if run_quiet systemctl disable --now kiosk_browser_2.service; then
+    step_ok
+  else
+    step_error_continue "kiosk_browser_2.service was not present or could not be disabled"
+  fi
 fi
 
 # remind about rpi-connect signin if applicable
 if [ $rpi_connect -eq 1 ]; then
-  echo ""
-  echo "*** IMPORTANT: Raspberry Pi Connect requires a one-time sign-in to link this"
-  echo "    device to your Raspberry Pi ID.  Log in as '$app_user' and run:"
-  echo ""
-  echo "    rpi-connect signin"
-  echo ""
-  echo "    If you are signed in as another admin user, run these commands instead:"
-  echo ""
-  echo "    sudo systemctl start user@$app_uid.service"
-  echo "    sudo -u $app_user XDG_RUNTIME_DIR=/run/user/$app_uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$app_uid/bus rpi-connect signin"
-  echo ""
-  echo "    Visit the"
-  echo "    URL it displays to authorize this device:"
-  echo ""
+  print_line ""
+  print_line "${C_BRIGHT_WHITE}*** IMPORTANT: Raspberry Pi Connect requires a one-time sign-in to link this"
+  print_line "    device to your Raspberry Pi ID.  Log in as '$app_user' and run:${C_RESET}"
+  print_line ""
+  print_line "${C_WHITE}       rpi-connect signin${C_RESET}"
+  print_line ""
+  print_line "${C_BRIGHT_WHITE}    If you are signed in as another admin user, run these commands instead:${C_RESET}"
+  print_line ""
+  print_line "${C_WHITE}       sudo systemctl start user@$app_uid.service"
+  print_line "       sudo -u $app_user XDG_RUNTIME_DIR=/run/user/$app_uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$app_uid/bus rpi-connect signin${C_RESET}"
+  print_line ""
+  print_line "${C_BRIGHT_WHITE}    Visit the URL it displays to authorize this device.${C_RESET}"
+  print_line ""
 fi
 
 # all done - countdown to reboot
 if [ $reboot -eq 1 ]; then
-  echo ""
+  print_line ""
   for i in $(seq 30 -1 1) ; do echo -ne "\r*** Rebooting in $i seconds.  (CTRL-C to cancel) ***" ; sleep 1 ; done
-  reboot
+  print_line ""
+  run_step "Rebooting system" reboot
 fi
