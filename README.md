@@ -24,15 +24,15 @@ chmod +x kiosk_cooker.sh
 
 `--password=<password>` sets the desired password for the kiosk application user.  Required argument (no default).
 
-`--no-reboot` disables the automatic reboot at the end of the script.  Useful when chaining this script into another application's install script.
-
-`--no-rpi-connect` skips installation of Raspberry Pi Connect (`rpi-connect`).  Connect is installed and its user services enabled globally by default.
-
-`--no-touch-keyboard` disables installation and setup of the on-screen touch keyboard (`squeekboard`).
+`--displays=<1|2>` sets the number of HDMI displays to configure.  Defaults to `1`.
 
 `--edid=<name>` sets the EDID profile to use for the display(s).  Defaults to `none` (skip EDID configuration).
 
-`--displays=<1|2>` sets the number of HDMI displays to configure.  Defaults to `1`.
+`--no-touch-keyboard` disables installation and setup of the on-screen touch keyboard (`squeekboard`).
+
+`--no-rpi-connect` skips installation of Raspberry Pi Connect (`rpi-connect`).  Connect is installed and its user services enabled globally by default.
+
+`--no-reboot` disables the automatic reboot at the end of the script.  Useful when chaining this script into another application's install script.
 
 `--remember` saves all other arguments provided on this run to a `kiosk_cooker.memory` file next to the script.  On subsequent runs, those saved arguments are automatically prepended to the command line so you don't have to repeat them.  Explicitly provided arguments always override saved ones.  Delete `kiosk_cooker.memory` to clear the saved arguments.
 

@@ -9,14 +9,16 @@ fi
 # suppress interactive prompts from apt/dpkg for the duration of this script
 export DEBIAN_FRONTEND=noninteractive
 
-# set default reboot state if necessary
-if [ ! -v reboot ]; then
-  reboot=1
-fi
-
 # set default application username if it hasn't been specified
 if [ ! -v app_user ]; then
   app_user=kiosk
+fi
+
+# application password has no default and must be provided via --password
+
+# set default number of displays if it hasn't been specified
+if [ ! -v displays ]; then
+  displays=1
 fi
 
 # set default edid if it hasn't been specified
@@ -24,9 +26,9 @@ if [ ! -v edid ]; then
   edid=none
 fi
 
-# set default number of displays if it hasn't been specified
-if [ ! -v displays ]; then
-  displays=1
+# set default touch keyboard state if it hasn't been specified
+if [ ! -v touch_keyboard ]; then
+  touch_keyboard=1
 fi
 
 # set default Raspberry Pi Connect install state if it hasn't been specified
@@ -34,9 +36,9 @@ if [ ! -v rpi_connect ]; then
   rpi_connect=1
 fi
 
-# set default touch keyboard state if it hasn't been specified
-if [ ! -v touch_keyboard ]; then
-  touch_keyboard=1
+# set default reboot state if necessary
+if [ ! -v reboot ]; then
+  reboot=1
 fi
 
 # load remembered arguments from memory file (if present), then let
@@ -63,12 +65,6 @@ for arg in "$@"; do
     --password=*)
       app_password="${arg#*=}"
       ;;
-    --no-reboot)
-      reboot=0
-      ;;
-    --edid=*)
-      edid="${arg#*=}"
-      ;;
     --displays=*)
       displays="${arg#*=}"
       if [ "$displays" != "1" ] && [ "$displays" != "2" ]; then
@@ -76,11 +72,17 @@ for arg in "$@"; do
         exit 1
       fi
       ;;
-    --no-rpi-connect)
-      rpi_connect=0
+    --edid=*)
+      edid="${arg#*=}"
       ;;
     --no-touch-keyboard)
       touch_keyboard=0
+      ;;
+    --no-rpi-connect)
+      rpi_connect=0
+      ;;
+    --no-reboot)
+      reboot=0
       ;;
     --remember)
       remember=1
