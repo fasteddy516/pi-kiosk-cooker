@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# kiosk_cooker version (used by script and generated UI text)
+SCRIPT_VERSION="0.9.0"
+
 # ensure the script is being run as root
 if [ "$(id -u)" -ne 0 ]; then
   echo "! This script must be run as root (i.e. with sudo)"
@@ -9,29 +12,26 @@ fi
 # suppress interactive prompts from apt/dpkg for the duration of this script
 export DEBIAN_FRONTEND=noninteractive
 
-# set default reboot state if necessary
-if [ ! -v reboot ]; then
-  reboot=1
-fi
-
 # set default application username if it hasn't been specified
 if [ ! -v app_user ]; then
-  app_user=pi
+  app_user=kiosk
 fi
 
-# set default application password if it hasn't been specified
-if [ ! -v app_password ]; then
-  app_password=raspberry
+# application password has no default and must be provided via --password
+
+# set default number of displays if it hasn't been specified
+if [ ! -v displays ]; then
+  displays=1
 fi
 
 # set default edid if it hasn't been specified
 if [ ! -v edid ]; then
-  edid=1080P-2CH
+  edid=none
 fi
 
-# set default number of displays if it hasn't been specified
-if [ ! -v displays ]; then
-  displays=2
+# set default touch keyboard state if it hasn't been specified
+if [ ! -v touch_keyboard ]; then
+  touch_keyboard=1
 fi
 
 # set default Raspberry Pi Connect install state if it hasn't been specified
@@ -39,9 +39,9 @@ if [ ! -v rpi_connect ]; then
   rpi_connect=1
 fi
 
-# set default touch keyboard state if it hasn't been specified
-if [ ! -v touch_keyboard ]; then
-  touch_keyboard=1
+# set default reboot state if necessary
+if [ ! -v reboot ]; then
+  reboot=1
 fi
 
 # load remembered arguments from memory file (if present), then let
@@ -68,12 +68,6 @@ for arg in "$@"; do
     --password=*)
       app_password="${arg#*=}"
       ;;
-    --no-reboot)
-      reboot=0
-      ;;
-    --edid=*)
-      edid="${arg#*=}"
-      ;;
     --displays=*)
       displays="${arg#*=}"
       if [ "$displays" != "1" ] && [ "$displays" != "2" ]; then
@@ -81,11 +75,17 @@ for arg in "$@"; do
         exit 1
       fi
       ;;
-    --no-rpi-connect)
-      rpi_connect=0
+    --edid=*)
+      edid="${arg#*=}"
       ;;
     --no-touch-keyboard)
       touch_keyboard=0
+      ;;
+    --no-rpi-connect)
+      rpi_connect=0
+      ;;
+    --no-reboot)
+      reboot=0
       ;;
     --remember)
       remember=1
@@ -96,6 +96,12 @@ for arg in "$@"; do
       ;;
   esac
 done
+
+# require a non-empty password to be explicitly provided
+if [ -z "${app_password:-}" ]; then
+  echo "! Missing required argument: --password=<password>"
+  exit 1
+fi
 
 # write remembered arguments (all args except --remember itself)
 if [ $remember -eq 1 ]; then
@@ -246,6 +252,10 @@ systemctl disable getty@tty1.service
 # create compositor/session startup files
 su "$app_user" -c "mkdir -p ~/.config ~/kiosk"
 loginctl enable-linger "$app_user" || true
+if [ $rpi_connect -eq 1 ]; then
+  # Ensure a user manager exists now so user services can be started before first login.
+  systemctl start "user@$app_uid.service" >/dev/null 2>&1 || true
+fi
 
 # set system-wide dark mode preference for GTK apps (including squeekboard)
 su "$app_user" -c "gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'" 2>/dev/null || true
@@ -257,6 +267,10 @@ if [ $rpi_connect -eq 1 ]; then
   if [ -f /usr/lib/systemd/user/rpi-connect-wayvnc.service ]; then
     systemctl --global enable rpi-connect-wayvnc.service
   fi
+  if [ -f /usr/lib/systemd/user/rpi-connect-signin.path ]; then
+    systemctl --global enable rpi-connect-signin.path
+  fi
+  su "$app_user" -c "XDG_RUNTIME_DIR=/run/user/$app_uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$app_uid/bus systemctl --user start rpi-connect.service rpi-connect-wayvnc.service rpi-connect-signin.path" >/dev/null 2>&1 || true
   labwc_connect_autostart=$(cat <<'EOF'
 
 # Keep user systemd/dbus environment aligned with this Wayland session.
@@ -271,6 +285,7 @@ else
   echo "* Disabling Raspberry Pi Connect user services"
   systemctl --global disable rpi-connect.service >/dev/null 2>&1 || true
   systemctl --global disable rpi-connect-wayvnc.service >/dev/null 2>&1 || true
+  systemctl --global disable rpi-connect-signin.path >/dev/null 2>&1 || true
   labwc_connect_autostart=""
 fi
 su "$app_user" -c "mkdir -p ~/.config/labwc"
@@ -340,6 +355,7 @@ su "$app_user" -c "mkdir -p ~/kiosk/kiosk_browser_1/profile ~/kiosk/kiosk_browse
 create_kiosk_browser_index() {
   local browser_num="$1"
   local settings_dir="~/kiosk/kiosk_browser_${browser_num}/settings"
+  local tint="$2"
 
   cat << EOF > /home/$app_user/kiosk/kiosk_browser_${browser_num}/index.html
 <!doctype html>
@@ -348,41 +364,141 @@ create_kiosk_browser_index() {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Kiosk Browser ${browser_num}</title>
+
   <style>
     :root {
-      color-scheme: light;
-      --bg-a: #f4f7ff;
-      --bg-b: #d9e4ff;
-      --ink: #12213d;
-      --accent: #1f4fd1;
+      color-scheme: dark;
+
+      --tint: oklch(0.68 0.14 ${tint}); 
+      /* Change only --tint to shift blue/green theme flavor. */
+      --bg-a: color-mix(in oklab, black 70%, var(--tint) 30%);
+      --bg-b: color-mix(in oklab, black 78%, var(--tint) 22%);
+      --ink: color-mix(in oklab, white 82%, var(--tint) 18%);
+      --accent: color-mix(in oklab, var(--tint) 78%, white 22%);
+      --accent-dark: color-mix(in oklab, var(--tint) 68%, black 32%);
+      --danger: #f87070;
+      --success: #4cd97a;
+      --card-bg: color-mix(in oklab, black 62%, var(--tint) 38%);
+      --card-border: color-mix(in oklab, var(--ink) 26%, transparent);
+      --repo-card-bg: color-mix(in oklab, white 44%, var(--accent) 96%);
+      --repo-card-ink: color-mix(in oklab, black 54%, var(--accent-dark) 46%);
+      --card-shadow: rgba(0, 0, 0, 0.55);
+      --field-border: color-mix(in oklab, black 55%, var(--tint) 45%);
+      --field-bg: color-mix(in oklab, black 72%, var(--tint) 28%);
+      --button-bg: color-mix(in oklab, var(--accent) 82%, black 18%);
+      --button-bg-hover: color-mix(in oklab, var(--accent-dark) 84%, black 16%);
+
+      /* Watermark settings: adjust SVG width/height for tile spacing. */
+      --page-bg: radial-gradient(circle at 20% 20%, color-mix(in oklab, var(--bg-a) 88%, white 12%) 0%, var(--bg-a) 45%, var(--bg-b) 100%);
+      --watermark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='160' viewBox='0 0 240 160'%3E%3Ctext x='120' y='80' dominant-baseline='middle' text-anchor='middle' transform='rotate(-45 120 80)' font-family='Noto Sans, Segoe UI, Arial, sans-serif' font-size='34' font-weight='700' letter-spacing='3' fill='rgba(120,160,255,0.12)'%3EDISPLAY ${browser_num}%3C/text%3E%3C/svg%3E");
     }
 
     * {
       box-sizing: border-box;
     }
 
+    html {
+      min-height: 100%;
+    }
+
     body {
-      margin: 0;
       min-height: 100vh;
+      margin: 0;
+      position: relative;
+      isolation: isolate;
       display: grid;
       place-items: center;
-      font-family: "Noto Sans", "Segoe UI", sans-serif;
+      padding: clamp(1.25rem, 4vw, 3rem);
       color: var(--ink);
-      background: radial-gradient(circle at 20% 20%, #ffffff 0%, var(--bg-a) 45%, var(--bg-b) 100%);
+      font-family: "Noto Sans", "Segoe UI", sans-serif;
+      background-image: var(--page-bg);
+      background-repeat: no-repeat;
+      background-size: cover;
+      background-attachment: fixed;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: -160px -240px;
+      z-index: 0;
+      pointer-events: none;
+      background-image: var(--watermark);
+      background-repeat: repeat;
+      background-size: 240px 160px;
+      will-change: transform;
+      animation: drift 15s linear infinite;
+    }
+
+    @keyframes drift {
+      from { transform: translate3d(0, 0, 0); }
+      to   { transform: translate3d(240px, 160px, 0); }
     }
 
     main {
+      position: relative;
+      z-index: 1;
       width: min(90vw, 900px);
-      padding: 3rem;
+      padding: clamp(2rem, 5vw, 3rem);
       border-radius: 1.2rem;
-      background: rgba(255, 255, 255, 0.88);
-      box-shadow: 0 1rem 3rem rgba(12, 40, 99, 0.2);
+      background: color-mix(in oklab, var(--card-bg) 88%, transparent);
+      border: 1px solid var(--card-border);
+      box-shadow: 0 1rem 3rem var(--card-shadow);
       text-align: center;
+      backdrop-filter: blur(2px);
+    }
+
+    .repo-card {
+      position: fixed;
+      z-index: 1;
+      left: 50%;
+      bottom: clamp(1rem, 2.5vw, 2rem);
+      transform: translateX(-50%);
+      width: min(90vw, 900px);
+      padding: 0.65rem 1rem;
+      border-radius: 0.9rem;
+      background: color-mix(in oklab, var(--repo-card-bg) 92%, transparent);
+      box-shadow: 0 0.6rem 1.8rem rgba(0, 0, 0, 0.35);
+      text-align: center;
+      backdrop-filter: blur(2px);
+      color: var(--repo-card-ink);
+    }
+
+    .repo-card-row {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .repo-card-left,
+    .repo-card-right {
+      flex: 1 1 50%;
+    }
+
+    .repo-card-left {
+      text-align: left;
+    }
+
+    .repo-card-right {
+      text-align: right;
+    }
+
+    .repo-card a {
+      color: var(--repo-card-ink);
+      font-weight: 600;
+      text-decoration: none;
+    }
+
+    .repo-card a:hover,
+    .repo-card a:focus-visible {
+      color: color-mix(in oklab, var(--repo-card-ink) 80%, black 20%);
+      text-decoration: underline;
     }
 
     h1 {
       margin: 0;
       font-size: clamp(2rem, 5vw, 3.25rem);
+      line-height: 1.1;
       letter-spacing: 0.02em;
     }
 
@@ -394,12 +510,17 @@ create_kiosk_browser_index() {
 
     code {
       display: inline-block;
-      margin-top: 1.5rem;
+      max-width: 100%;
+      margin-top: 0.8rem;
+      margin-left: 2rem;
+      margin-right: 2rem;
       padding: 0.5rem 0.75rem;
       border-radius: 0.5rem;
-      color: #fff;
-      background: var(--accent);
+      color: #ffffff;
+      background: color-mix(in oklab, var(--accent-dark) 82%, black 18%);
       font-size: 0.95rem;
+      line-height: 1.45;
+      white-space: normal;
     }
 
     form {
@@ -418,23 +539,41 @@ create_kiosk_browser_index() {
 
     input[type="text"] {
       width: 100%;
+      min-width: 0;
       padding: 0.8rem 0.95rem;
-      border: 1px solid #b6c6ef;
+      border: 1px solid var(--field-border);
       border-radius: 0.65rem;
-      font-size: 1rem;
       color: var(--ink);
-      background: #ffffff;
+      background: var(--field-bg);
+      font: inherit;
+      font-size: 1rem;
+    }
+
+    input[type="text"]:focus {
+      border-color: var(--accent);
+      outline: 3px solid color-mix(in oklab, var(--accent) 35%, transparent);
+      outline-offset: 0;
     }
 
     button {
       border: 0;
       border-radius: 0.65rem;
       padding: 0.8rem 1rem;
+      color: #ffffff;
+      background: var(--button-bg);
+      font: inherit;
       font-size: 1rem;
       font-weight: 600;
-      color: #ffffff;
-      background: var(--accent);
       cursor: pointer;
+    }
+
+    button:focus-visible {
+      outline: 3px solid color-mix(in oklab, var(--accent) 45%, transparent);
+      outline-offset: 2px;
+    }
+
+    button:hover:not(:disabled) {
+      background: var(--button-bg-hover);
     }
 
     button:disabled {
@@ -449,24 +588,41 @@ create_kiosk_browser_index() {
     }
 
     #status.error {
-      color: #a21414;
+      color: var(--danger);
     }
 
     #status.ok {
-      color: #0f5b21;
+      color: var(--success);
     }
 
     @media (max-width: 700px) {
       .url-row {
         grid-template-columns: 1fr;
       }
+
+      button {
+        width: 100%;
+      }
+
+      .repo-card-row {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.35rem;
+      }
+
+      .repo-card-left,
+      .repo-card-right {
+        text-align: center;
+      }
     }
   </style>
 </head>
+
 <body>
   <main>
-    <h1>Kiosk Browser ${browser_num} Ready</h1>
-    <p>This local startup page confirms the kiosk browser is running on display ${browser_num}.</p>
+    <h1>Display ${browser_num}</h1>
+    <p>This is a full screen chromium browser window displaying a local HTML file.</p>
+
     <form id="set-start-page-form">
       <div class="url-row">
         <input id="start-url" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://example.com" aria-label="Start page URL">
@@ -474,8 +630,20 @@ create_kiosk_browser_index() {
       </div>
       <div id="status" aria-live="polite"></div>
     </form>
-    <code>Enter the desired startup URL, press Set start page, then in the file picker open ${settings_dir} and press Open. To change it later, edit ${settings_dir}/startup_url.txt manually.</code>
+
+    <code>Enter the desired startup URL and press <b><i>Set start page</i></b>.  In the file picker that pops up, select <b><i>${settings_dir}</i></b> and press <b><i>Open</i></b>.  The selected URL will be saved and used as the startup page.</code>
   </main>
+
+  <aside class="repo-card">
+    <div class="repo-card-row">
+      <div class="repo-card-left">
+        Raspberry Pi Kiosk Cooker ${SCRIPT_VERSION} by <a href="https://github.com/fasteddy516" target="_blank" rel="noopener noreferrer">fasteddy516</a>
+      </div>
+      <div class="repo-card-right">
+        <a href="https://github.com/fasteddy516/pi-kiosk-cooker" target="_blank" rel="noopener noreferrer">github.com/fasteddy516/pi-kiosk-cooker</a>
+      </div>
+    </div>
+  </aside>
 
   <script>
     const form = document.getElementById('set-start-page-form');
@@ -667,8 +835,8 @@ EOF
   chmod +x /home/$app_user/kiosk/kiosk_browser_${browser_num}/launch_kiosk_browser_${browser_num}.sh
 }
 
-create_kiosk_browser_index 1
-create_kiosk_browser_index 2
+create_kiosk_browser_index 1 250
+create_kiosk_browser_index 2 160
 
 create_kiosk_browser_launcher 1 "HDMI-A-1" "0,0" "1920,1080"
 create_kiosk_browser_launcher 2 "HDMI-A-2" "1920,0" "1920,1080"
@@ -979,10 +1147,17 @@ fi
 if [ $rpi_connect -eq 1 ]; then
   echo ""
   echo "*** IMPORTANT: Raspberry Pi Connect requires a one-time sign-in to link this"
-  echo "    device to your Raspberry Pi ID.  Run the following command and visit the"
-  echo "    URL it displays to authorize this device:"
+  echo "    device to your Raspberry Pi ID.  Log in as '$app_user' and run:"
   echo ""
-  echo "    sudo -u $app_user rpi-connect signin"
+  echo "    rpi-connect signin"
+  echo ""
+  echo "    If you are signed in as another admin user, run these commands instead:"
+  echo ""
+  echo "    sudo systemctl start user@$app_uid.service"
+  echo "    sudo -u $app_user XDG_RUNTIME_DIR=/run/user/$app_uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$app_uid/bus rpi-connect signin"
+  echo ""
+  echo "    Visit the"
+  echo "    URL it displays to authorize this device:"
   echo ""
 fi
 

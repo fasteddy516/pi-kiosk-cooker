@@ -3,42 +3,54 @@
 
 _Tested on Raspberry Pi 5 hardware running Raspberry Pi OS Lite (64-bit) "Trixie"_
 
+Written by [Edward Wright](mailto:fasteddy@thewrightspace.net) (fasteddy516).
+
+Available at https://github.com/fasteddy516/SimplySerial
+
+
+## Description
 This is a script I use for the initial set up of a Raspberry Pi as a single or dual-display kiosk-style device.  Typical use cases are status/dashboard displays, automated media players and touch control interfaces (for [Home Assistant](https://www.home-assistant.io/) in my case).  This script _does not_ fully set up the Pi for these cases, but _does_ take care of the initial set up of a barebones kiosk environment such that running the necessary application(s) should be relatively straight-forward.
 
-## Disclaimer
-I use this script for hobby/personal projects in non-critical, controlled environments; there is virtually no thought put into securing/hardening the device or operating system.  Like the associated MIT license says, "THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND", so use it at your own risk! (But I *do* hope you find it useful, as I do!)
+> [!WARNING]
+> I use this script for hobby/personal projects in non-critical, controlled environments; there is virtually no thought put into securing/hardening the device or operating system.  In recent versions I have made heavy use of GitHub Copilot to assist with script additions and improvements.  Like the associated MIT license says, "THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND", so use it at your own risk! (But I *do* hope you find it useful, as I do!)
+
 
 ## Installation
-### The simple way
-`curl -sS "https://raw.githubusercontent.com/fasteddy516/pi-kiosk-cooker/main/kiosk_cooker.sh" | sudo bash -s -- --user=<user> --password=<pass>`
+### The simple way:
+`curl -sS "https://raw.githubusercontent.com/fasteddy516/pi-kiosk-cooker/main/kiosk_cooker.sh" | sudo bash -s -- --password=<pass>`
 
-### The safer way
+### The safer way:
 ```
 wget https://github.com/fasteddy516/pi-kiosk-cooker/raw/main/kiosk_cooker.sh
 chmod +x kiosk_cooker.sh
-./kiosk_cooker.sh --user=<user> --password=<pass>
+./kiosk_cooker.sh --password=<pass>
 ```
 
 ## Available arguments
-`--user=<user>` sets the desired kiosk application user name
+`--user=<user>` sets the desired kiosk application user name.  Defaults to `kiosk`.
 
-`--password=<password>` sets the desired password for the kiosk application user
+`--password=<password>` sets the desired password for the kiosk application user.  Required argument (no default).
 
-`--no-reboot` disables the automatic reboot at the end of the script.  Useful when chaining this script into another application's install script.
+`--displays=<1|2>` sets the number of HDMI displays to configure.  Defaults to `1`.
 
-`--no-rpi-connect` skips installation of Raspberry Pi Connect (`rpi-connect`).  Connect is installed and its user services enabled globally by default.
+`--edid=<name>` sets the EDID profile to use for the display(s).  Defaults to `none` (skip EDID configuration).
+
+> [!NOTE]
+> At this time, the only supported EDID options are `none` (the default) and `1080P-2CH` (1080p@60Hz with 2-channel PCM audio).  
 
 `--no-touch-keyboard` disables installation and setup of the on-screen touch keyboard (`squeekboard`).
 
-`--edid=<name>` sets the EDID profile to use for the display(s).  Defaults to `1080P-2CH`.  Use `--edid=none` to skip EDID configuration entirely.
+`--no-rpi-connect` skips installation of Raspberry Pi Connect (`rpi-connect`).  Connect is installed and its user services enabled globally by default.
 
-`--displays=<1|2>` sets the number of HDMI displays to configure.  Defaults to `2`.
+`--no-reboot` disables the automatic reboot at the end of the script.
 
 `--remember` saves all other arguments provided on this run to a `kiosk_cooker.memory` file next to the script.  On subsequent runs, those saved arguments are automatically prepended to the command line so you don't have to repeat them.  Explicitly provided arguments always override saved ones.  Delete `kiosk_cooker.memory` to clear the saved arguments.
 
-> **Warning:** Any password passed via `--password` will be stored as plaintext in `kiosk_cooker.memory`.  Avoid using `--remember` together with `--password` in security-sensitive environments, or delete the memory file once the password is no longer needed.
+> [!WARNING]
+> Any password passed via `--password` will be stored as **plaintext** in `kiosk_cooker.memory`.  Avoid using `--remember` together with `--password` in security-sensitive environments, or delete the memory file once the password is no longer needed.
 
-## What this script does
+
+## Under the hood
 
 The following is a breakdown of every significant action the script performs, and why.
 
@@ -79,7 +91,7 @@ Three display-related settings are applied via `raspi-config`'s non-interactive 
 - **Screen blanking disabled** — Prevents the display from going blank after a period of inactivity, which is undesirable for a kiosk.
 
 ### Kiosk application user
-A dedicated user account (default: `pi`) is created for running the kiosk session and all associated applications. Running as a non-root user limits the blast radius of any application-level issue and is required by `seatd` and the Wayland session model. The user is added to the `video`, `render`, `input`, and `seat` groups so it can access the GPU, input devices, and seat management without elevated privileges.
+A dedicated user account (default: `kiosk`) is created for running the kiosk session and all associated applications. Running as a non-root user limits the blast radius of any application-level issue and is required by `seatd` and the Wayland session model. The user is added to the `video`, `render`, `input`, and `seat` groups so it can access the GPU, input devices, and seat management without elevated privileges.
 
 `loginctl enable-linger` is called for this user so that user-level systemd services (including D-Bus) start at boot without requiring an interactive login session.
 
@@ -137,3 +149,12 @@ Account linking requires a one-time sign-in after installation.  Because screen 
 1. After the Pi reboots, open a remote shell to the Pi and log in as the kiosk application user (the value passed to `--user`).
 2. Run `rpi-connect signin` and follow the URL it prints to authorize the device with your Raspberry Pi ID.
 3. Once authorized, screen sharing will be available through Raspberry Pi Connect.
+
+If you are signed in as a different admin account and cannot log in directly as the kiosk user, use the kiosk user's systemd bus explicitly:
+
+```
+sudo systemctl start user@$(id -u <app_user>).service
+sudo -u <app_user> XDG_RUNTIME_DIR=/run/user/$(id -u <app_user>) DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u <app_user>)/bus rpi-connect signin
+```
+
+This avoids the `Failed to connect to user scope bus` error that can happen with a plain `sudo -u <app_user> rpi-connect signin`.
