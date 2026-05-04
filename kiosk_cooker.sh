@@ -125,7 +125,24 @@ if [ -z "$browser_package" ]; then
 fi
 echo "* Using browser package: $browser_package"
 
+touch_keyboard_package=""
+for candidate in squeekboard maliit-keyboard; do
+  candidate_version="$(apt-cache policy "$candidate" 2>/dev/null | awk '/Candidate:/ {print $2; exit}')"
+  if [ -n "$candidate_version" ] && [ "$candidate_version" != "(none)" ]; then
+    touch_keyboard_package="$candidate"
+    break
+  fi
+done
+if [ -n "$touch_keyboard_package" ]; then
+  echo "* Using touch keyboard package: $touch_keyboard_package"
+else
+  echo "* Touch keyboard package not found in apt repos (tried: squeekboard, maliit-keyboard)"
+fi
+
 kiosk_packages="labwc wlr-randr wayland-protocols xwayland dbus-user-session seatd $browser_package"
+if [ -n "$touch_keyboard_package" ]; then
+  kiosk_packages="$kiosk_packages $touch_keyboard_package"
+fi
 if [ $rpi_connect -eq 1 ]; then
   kiosk_packages="$kiosk_packages rpi-connect"
 fi
@@ -246,9 +263,54 @@ else
   labwc_connect_autostart=""
 fi
 su "$app_user" -c "mkdir -p ~/.config/labwc"
+cat << 'EOF' > /home/$app_user/.config/labwc/rc.xml
+<?xml version="1.0"?>
+<labwc_config>
+  <core>
+    <!-- Prefer client-side decorations so Chromium negotiates via xdg-decoration. -->
+    <decoration>client</decoration>
+  </core>
+  <theme>
+    <!-- Zero-size fallback theme: if SSD is applied despite the above, it renders invisibly. -->
+    <name>kiosk</name>
+  </theme>
+  <windowRules>
+    <!-- Belt-and-suspenders: disable SSD for every window regardless of app_id. -->
+    <windowRule identifier="*" serverDecoration="no" />
+  </windowRules>
+</labwc_config>
+EOF
+chown $app_user:$app_user /home/$app_user/.config/labwc/rc.xml
+# Create a zero-size labwc theme so even if SSD is applied it renders invisibly
+su "$app_user" -c "mkdir -p ~/.local/share/themes/kiosk/openbox-3"
+cat << 'EOF' > /home/$app_user/.local/share/themes/kiosk/openbox-3/themerc
+border.width: 0
+padding.width: 0
+padding.height: 0
+titlebar.height: 0
+EOF
+chown -R $app_user:$app_user /home/$app_user/.local/share/themes
+if [ "$touch_keyboard_package" = "maliit-keyboard" ]; then
+  labwc_touch_keyboard_autostart=$(cat <<'EOF'
+
+# Start the Maliit server on Wayland for text-input pop-up support.
+QT_QPA_PLATFORM=wayland maliit-server >/tmp/maliit-server.log 2>&1 &
+EOF
+)
+elif [ "$touch_keyboard_package" = "squeekboard" ]; then
+  labwc_touch_keyboard_autostart=$(cat <<'EOF'
+
+# Start the on-screen keyboard service for text-input pop-up support.
+squeekboard >/dev/null 2>&1 &
+EOF
+)
+else
+  labwc_touch_keyboard_autostart=""
+fi
 cat << EOF > /home/$app_user/.config/labwc/autostart
 #!/bin/sh
 $labwc_connect_autostart
+$labwc_touch_keyboard_autostart
 EOF
 chown $app_user:$app_user /home/$app_user/.config/labwc/autostart
 chmod +x /home/$app_user/.config/labwc/autostart
@@ -264,6 +326,10 @@ export MOZ_ENABLE_WAYLAND=1
 export QT_QPA_PLATFORM=wayland
 export GDK_BACKEND=wayland,x11
 export SDL_VIDEODRIVER=wayland
+export GTK_IM_MODULE=wayland
+export QT_IM_MODULE=wayland
+export SDL_IM_MODULE=wayland
+export XMODIFIERS=@im=wayland
 
 if [ ! -d "\$XDG_RUNTIME_DIR" ] || [ ! -w "\$XDG_RUNTIME_DIR" ]; then
   echo "session_start: XDG_RUNTIME_DIR '\$XDG_RUNTIME_DIR' is missing or not writable" >&2
@@ -375,6 +441,7 @@ DEFAULT_URL="file://$APP_DIR/index.html"
 START_URL="$DEFAULT_URL"
 OUTPUT_NAME="HDMI-A-1"
 FALLBACK_WINDOW_POS="0,0"
+FALLBACK_WINDOW_SIZE="1920,1080"
 
 if [ -f "$URL_FILE" ]; then
   raw_url="$(head -n 1 "$URL_FILE" | tr -d '\r')"
@@ -403,22 +470,46 @@ get_output_position() {
   return 1
 }
 
+get_output_size() {
+  local output_name="$1"
+  local mode
+  mode="$(wlr-randr 2>/dev/null | awk -v out="$output_name" '
+    $1 == out { in_out = 1; next }
+    in_out && $1 == "Current" && $2 == "mode:" { print $3; exit }
+    in_out && /^[A-Za-z0-9_.-]+$/ { in_out = 0 }
+  ')"
+  if [[ "$mode" =~ ^[0-9]+x[0-9]+$ ]]; then
+    echo "${mode/x/,}"
+    return 0
+  fi
+  return 1
+}
+
 WINDOW_POS="$FALLBACK_WINDOW_POS"
 if resolved_pos="$(get_output_position "$OUTPUT_NAME")"; then
   WINDOW_POS="$resolved_pos"
 fi
 
+WINDOW_SIZE="$FALLBACK_WINDOW_SIZE"
+if resolved_size="$(get_output_size "$OUTPUT_NAME")"; then
+  WINDOW_SIZE="$resolved_size"
+fi
+
 exec "$BROWSER_BIN" \
   --ozone-platform=wayland \
-  --enable-features=UseOzonePlatform \
-  --kiosk "$START_URL" \
+  --enable-features=UseOzonePlatform,VirtualKeyboard,WaylandWindowDecorations \
+  --disable-features=Translate,MediaRouter,AutofillServerCommunication \
+  --enable-wayland-ime \
+  --enable-virtual-keyboard \
+  --touch-events=enabled \
+  --app="$START_URL" \
   --window-position="$WINDOW_POS" \
-  --start-fullscreen \
+  --window-size="$WINDOW_SIZE" \
+  --start-maximized \
   --no-first-run \
   --no-default-browser-check \
   --disable-session-crashed-bubble \
   --disable-infobars \
-  --disable-features=Translate,MediaRouter,AutofillServerCommunication \
   --check-for-update-interval=31536000 \
   --user-data-dir="$PROFILE_DIR"
 EOF
@@ -486,6 +577,7 @@ DEFAULT_URL="file://$APP_DIR/index.html"
 START_URL="$DEFAULT_URL"
 OUTPUT_NAME="HDMI-A-2"
 FALLBACK_WINDOW_POS="1920,0"
+FALLBACK_WINDOW_SIZE="1920,1080"
 
 if [ -f "$URL_FILE" ]; then
   raw_url="$(head -n 1 "$URL_FILE" | tr -d '\r')"
@@ -514,22 +606,46 @@ get_output_position() {
   return 1
 }
 
+get_output_size() {
+  local output_name="$1"
+  local mode
+  mode="$(wlr-randr 2>/dev/null | awk -v out="$output_name" '
+    $1 == out { in_out = 1; next }
+    in_out && $1 == "Current" && $2 == "mode:" { print $3; exit }
+    in_out && /^[A-Za-z0-9_.-]+$/ { in_out = 0 }
+  ')"
+  if [[ "$mode" =~ ^[0-9]+x[0-9]+$ ]]; then
+    echo "${mode/x/,}"
+    return 0
+  fi
+  return 1
+}
+
 WINDOW_POS="$FALLBACK_WINDOW_POS"
 if resolved_pos="$(get_output_position "$OUTPUT_NAME")"; then
   WINDOW_POS="$resolved_pos"
 fi
 
+WINDOW_SIZE="$FALLBACK_WINDOW_SIZE"
+if resolved_size="$(get_output_size "$OUTPUT_NAME")"; then
+  WINDOW_SIZE="$resolved_size"
+fi
+
 exec "$BROWSER_BIN" \
   --ozone-platform=wayland \
-  --enable-features=UseOzonePlatform \
-  --kiosk "$START_URL" \
+  --enable-features=UseOzonePlatform,VirtualKeyboard,WaylandWindowDecorations \
+  --disable-features=Translate,MediaRouter,AutofillServerCommunication \
+  --enable-wayland-ime \
+  --enable-virtual-keyboard \
+  --touch-events=enabled \
+  --app="$START_URL" \
   --window-position="$WINDOW_POS" \
-  --start-fullscreen \
+  --window-size="$WINDOW_SIZE" \
+  --start-maximized \
   --no-first-run \
   --no-default-browser-check \
   --disable-session-crashed-bubble \
   --disable-infobars \
-  --disable-features=Translate,MediaRouter,AutofillServerCommunication \
   --check-for-update-interval=31536000 \
   --user-data-dir="$PROFILE_DIR"
 EOF
