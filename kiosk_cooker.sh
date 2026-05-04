@@ -233,6 +233,9 @@ systemctl disable getty@tty1.service
 # create compositor/session startup files
 su "$app_user" -c "mkdir -p ~/.config ~/kiosk"
 loginctl enable-linger "$app_user" || true
+
+# set system-wide dark mode preference for GTK apps (including squeekboard)
+su "$app_user" -c "gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'" 2>/dev/null || true
 if [ $rpi_connect -eq 1 ]; then
   echo "* Enabling Raspberry Pi Connect user services"
   if [ -f /usr/lib/systemd/user/rpi-connect.service ]; then
@@ -314,6 +317,7 @@ export MOZ_ENABLE_WAYLAND=1
 export QT_QPA_PLATFORM=wayland
 export GDK_BACKEND=wayland,x11
 export SDL_VIDEODRIVER=wayland
+export GTK_THEME=Adwaita:dark
 export GTK_IM_MODULE=wayland
 export QT_IM_MODULE=wayland
 export SDL_IM_MODULE=wayland
@@ -485,10 +489,11 @@ fi
 
 exec "$BROWSER_BIN" \
   --ozone-platform=wayland \
-  --enable-features=UseOzonePlatform,VirtualKeyboard,WaylandWindowDecorations \
+  --enable-features=UseOzonePlatform,VirtualKeyboard,WaylandWindowDecorations,WebContentsForceDark \
   --disable-features=Translate,MediaRouter,AutofillServerCommunication \
   --enable-wayland-ime \
   --enable-virtual-keyboard \
+  --force-dark-mode \
   --touch-events=enabled \
   --app="$START_URL" \
   --window-position="$WINDOW_POS" \
@@ -621,10 +626,11 @@ fi
 
 exec "$BROWSER_BIN" \
   --ozone-platform=wayland \
-  --enable-features=UseOzonePlatform,VirtualKeyboard,WaylandWindowDecorations \
+  --enable-features=UseOzonePlatform,VirtualKeyboard,WaylandWindowDecorations,WebContentsForceDark \
   --disable-features=Translate,MediaRouter,AutofillServerCommunication \
   --enable-wayland-ime \
   --enable-virtual-keyboard \
+  --force-dark-mode \
   --touch-events=enabled \
   --app="$START_URL" \
   --window-position="$WINDOW_POS" \
