@@ -334,7 +334,7 @@ chown $app_user:$app_user /home/$app_user/kiosk/session_start.sh
 chmod +x /home/$app_user/kiosk/session_start.sh
 
 # create local static app files and browser launchers
-su "$app_user" -c "mkdir -p ~/kiosk/kiosk_browser_1/profile ~/kiosk/kiosk_browser_2/profile"
+su "$app_user" -c "mkdir -p ~/kiosk/kiosk_browser_1/profile ~/kiosk/kiosk_browser_1/settings ~/kiosk/kiosk_browser_2/profile ~/kiosk/kiosk_browser_2/settings"
 cat << 'EOF' > /home/$app_user/kiosk/kiosk_browser_1/index.html
 <!doctype html>
 <html lang="en">
@@ -395,14 +395,150 @@ cat << 'EOF' > /home/$app_user/kiosk/kiosk_browser_1/index.html
       background: var(--accent);
       font-size: 0.95rem;
     }
+
+    form {
+      margin-top: 1.5rem;
+      display: grid;
+      gap: 0.75rem;
+      justify-items: center;
+    }
+
+    .url-row {
+      width: min(100%, 720px);
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 0.75rem;
+    }
+
+    input[type="text"] {
+      width: 100%;
+      padding: 0.8rem 0.95rem;
+      border: 1px solid #b6c6ef;
+      border-radius: 0.65rem;
+      font-size: 1rem;
+      color: var(--ink);
+      background: #ffffff;
+    }
+
+    button {
+      border: 0;
+      border-radius: 0.65rem;
+      padding: 0.8rem 1rem;
+      font-size: 1rem;
+      font-weight: 600;
+      color: #ffffff;
+      background: var(--accent);
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: 0.7;
+      cursor: wait;
+    }
+
+    #status {
+      min-height: 1.4em;
+      margin-top: 0.25rem;
+      font-size: 0.95rem;
+    }
+
+    #status.error {
+      color: #a21414;
+    }
+
+    #status.ok {
+      color: #0f5b21;
+    }
+
+    @media (max-width: 700px) {
+      .url-row {
+        grid-template-columns: 1fr;
+      }
+    }
   </style>
 </head>
 <body>
   <main>
     <h1>Kiosk Browser 1 Ready</h1>
-    <p>This local startup page confirms the fullscreen kiosk browser is running on display 1.</p>
-    <code>Create or edit startup_url.txt in this folder to point to another URL.</code>
+    <p>This local startup page confirms the kiosk browser is running on display 1.</p>
+    <form id="set-start-page-form">
+      <div class="url-row">
+        <input id="start-url" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://example.com" aria-label="Start page URL">
+        <button id="set-start-page" type="submit">Set start page</button>
+      </div>
+      <div id="status" aria-live="polite"></div>
+    </form>
+    <code>Enter the desired startup URL, press Set start page, then in the file picker open ~/kiosk/kiosk_browser_1/settings and press Open. To change it later, edit ~/kiosk/kiosk_browser_1/settings/startup_url.txt manually.</code>
   </main>
+
+  <script>
+    const form = document.getElementById('set-start-page-form');
+    const input = document.getElementById('start-url');
+    const button = document.getElementById('set-start-page');
+    const statusEl = document.getElementById('status');
+
+    function setStatus(message, kind) {
+      statusEl.textContent = message;
+      statusEl.className = kind || '';
+    }
+
+    function normalizeUrl(value) {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        return null;
+      }
+
+      const prefixed = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmed) ? trimmed : `https://${trimmed}`;
+
+      try {
+        const url = new URL(prefixed);
+        if (url.protocol === 'http:' || url.protocol === 'https:' || url.protocol === 'file:') {
+          return url.toString();
+        }
+      } catch (_) {
+        return null;
+      }
+
+      return null;
+    }
+
+    async function writeStartupUrl(url) {
+      if (!window.showDirectoryPicker) {
+        throw new Error('File write API not available in this Chromium build.');
+      }
+
+      const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      const fileHandle = await dirHandle.getFileHandle('startup_url.txt', { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(`${url}\n`);
+      await writable.close();
+    }
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+
+      const normalizedUrl = normalizeUrl(input.value);
+      if (!normalizedUrl) {
+        setStatus('Enter a valid http(s) or file URL.', 'error');
+        input.focus();
+        return;
+      }
+
+      button.disabled = true;
+      setStatus('Saving startup_url.txt...', '');
+
+      try {
+        await writeStartupUrl(normalizedUrl);
+        setStatus('Saved. Navigating now...', 'ok');
+      } catch (error) {
+        setStatus(`Could not save startup_url.txt automatically: ${error.message} Navigating anyway.`, 'error');
+      }
+
+      setTimeout(() => {
+        window.location.href = normalizedUrl;
+      }, 300);
+    });
+  </script>
 </body>
 </html>
 EOF
@@ -428,7 +564,7 @@ fi
 
 APP_DIR="$HOME/kiosk/kiosk_browser_1"
 PROFILE_DIR="$APP_DIR/profile"
-URL_FILE="$APP_DIR/startup_url.txt"
+URL_FILE="$APP_DIR/settings/startup_url.txt"
 DEFAULT_URL="file://$APP_DIR/index.html"
 START_URL="$DEFAULT_URL"
 OUTPUT_NAME="HDMI-A-1"
@@ -437,11 +573,16 @@ FALLBACK_WINDOW_SIZE="1920,1080"
 
 if [ -f "$URL_FILE" ]; then
   raw_url="$(head -n 1 "$URL_FILE" | tr -d '\r')"
+else
+  raw_url=""
+fi
+
+if [ -n "$raw_url" ]; then
   raw_url="$(echo "$raw_url" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
   if [[ "$raw_url" =~ ^https?:// ]] || [[ "$raw_url" =~ ^file:// ]]; then
     START_URL="$raw_url"
   else
-    echo "Ignoring invalid startup URL in $URL_FILE: '$raw_url'" >&2
+    echo "Ignoring invalid startup URL from settings file: '$raw_url'" >&2
   fi
 fi
 
@@ -565,7 +706,7 @@ fi
 
 APP_DIR="$HOME/kiosk/kiosk_browser_2"
 PROFILE_DIR="$APP_DIR/profile"
-URL_FILE="$APP_DIR/startup_url.txt"
+URL_FILE="$APP_DIR/settings/startup_url.txt"
 DEFAULT_URL="file://$APP_DIR/index.html"
 START_URL="$DEFAULT_URL"
 OUTPUT_NAME="HDMI-A-2"
@@ -574,11 +715,16 @@ FALLBACK_WINDOW_SIZE="1920,1080"
 
 if [ -f "$URL_FILE" ]; then
   raw_url="$(head -n 1 "$URL_FILE" | tr -d '\r')"
+else
+  raw_url=""
+fi
+
+if [ -n "$raw_url" ]; then
   raw_url="$(echo "$raw_url" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
   if [[ "$raw_url" =~ ^https?:// ]] || [[ "$raw_url" =~ ^file:// ]]; then
     START_URL="$raw_url"
   else
-    echo "Ignoring invalid startup URL in $URL_FILE: '$raw_url'" >&2
+    echo "Ignoring invalid startup URL from settings file: '$raw_url'" >&2
   fi
 fi
 

@@ -103,9 +103,11 @@ The service runs `/home/<app_user>/kiosk/kiosk_browser_1/launch_kiosk_browser_1.
 
 Initial startup content is a local static page at `/home/<app_user>/kiosk/kiosk_browser_1/index.html`.
 
-To point the kiosk to another site later, create `/home/<app_user>/kiosk/kiosk_browser_1/startup_url.txt` with a single line containing the URL (for example `https://example.com`).
+That page includes a URL field and **Set start page** button. Enter a URL, tap the button, and Chromium will prompt once to choose a folder. Select `/home/<app_user>/kiosk/kiosk_browser_1/settings`; the page then writes `startup_url.txt` in that folder and immediately navigates to the entered URL.
 
-When present and valid (`http://`, `https://`, or `file://`), that value is used. If the file is missing or invalid, the launcher falls back to the local hello-world page.
+You can still set the URL manually by creating `/home/<app_user>/kiosk/kiosk_browser_1/settings/startup_url.txt` with a single line containing the URL (for example `https://example.com`).
+
+When present and valid (`http://`, `https://`, or `file://`), that value is used. If the file is missing or invalid, the launcher falls back to the local startup page.
 
 ### Display 2 scaffold (`kiosk_browser_2.service`)
 The script also creates a parallel display 2 scaffold:
