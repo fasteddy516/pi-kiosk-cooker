@@ -26,9 +26,9 @@ chmod +x kiosk_cooker.sh
 
 `--no-reboot` disables the automatic reboot at the end of the script.  Useful when chaining this script into another application's install script.
 
-`--no-demo` disables the default kiosk demo service (`xterm-demo.service`).  Again, useful when chaining into another application's install script.
-
 `--no-rpi-connect` skips installation of Raspberry Pi Connect (`rpi-connect`).  Connect is installed and its user services enabled globally by default.
+
+`--no-touch-keyboard` disables installation and setup of the on-screen touch keyboard (`squeekboard`).
 
 `--edid=<name>` sets the EDID profile to use for the display(s).  Defaults to `1080P-2CH`.  Use `--edid=none` to skip EDID configuration entirely.
 
@@ -53,7 +53,8 @@ The script sets `DEBIAN_FRONTEND=noninteractive` for the duration of its executi
 | `xwayland` | Compatibility layer so X11 applications can run inside the Wayland session. |
 | `dbus-user-session` | Provides a per-user D-Bus session bus, required by Wayland and labwc. |
 | `seatd` | A seat management daemon that grants unprivileged users access to input and display hardware without requiring root. |
-| `xterm` | A minimal terminal emulator, used by the optional demo service to verify the kiosk environment is working. |
+| `chromium-browser` / `chromium` | Chromium-based browser used for fullscreen kiosk operation. The script installs whichever package is available on the target OS. |
+| `squeekboard` _(when available and not disabled)_ | Wayland on-screen keyboard. Installed and managed as a dedicated systemd service (`kiosk-touch-keyboard.service`) so it can be enabled/disabled independently of the compositor and browser services. |
 | `rpi-connect` _(optional)_ | Full Raspberry Pi Connect package (not lite), required for screen sharing support. Installed by default; skipped when `--no-rpi-connect` is passed. |
 
 ### Boot configuration (`/boot/firmware/cmdline.txt`)
@@ -93,8 +94,36 @@ The kiosk session is built around three layered systemd services:
 
 **`labwc/autostart`** is a shell script that labwc executes at session start. When Raspberry Pi Connect is enabled, it imports the Wayland session environment into systemd and D-Bus so that `rpi-connect-wayvnc.service` can reach the compositor for screen sharing.
 
-### Demo service (`xterm-demo.service`)
-An optional demo application runs after the display layout is initialised. It opens one `xterm` window per configured display to confirm that the Wayland session is running, displays appear correctly, and XWayland (for X11 application compatibility) is functional. This service is enabled by default and can be disabled with `--no-demo` (or removed once you replace it with your own application service).
+**`kiosk-touch-keyboard.service`** is an optional systemd service (created when `squeekboard` is available and `--no-touch-keyboard` is not used). It starts `squeekboard` after `kiosk-ui-init.service`, runs as the kiosk application user with the same Wayland environment as the browser services, and can be toggled independently:
+
+- Disable now and on boot: `sudo systemctl disable --now kiosk-touch-keyboard.service`
+- Enable now and on boot: `sudo systemctl enable --now kiosk-touch-keyboard.service`
+
+**`labwc/rc.xml`** is generated with three layers of compositor decoration suppression. `<core><decoration>client</decoration>` instructs labwc to prefer client-side decorations (CSD) globally, meaning windows negotiate their own frame via the `xdg-decoration` protocol rather than having the compositor draw a title bar. Chromium, when launched with `WaylandWindowDecorations` in `--enable-features`, requests CSD and suppresses its own title bar when maximized. A `<windowRule identifier="*" serverDecoration="no"/>` rule acts as a belt-and-suspenders fallback in case CSD negotiation fails for any window. Finally, a custom zero-pixel `kiosk` theme (`border.width: 0`, `titlebar.height: 0`) is installed under `~/.local/share/themes/kiosk/openbox-3/themerc` and referenced via `<theme><name>kiosk</name></theme>` — if server-side decorations are ever applied despite the above, they render invisibly.
+
+**`session_start.sh`** also exports Wayland IM variables (`GTK_IM_MODULE`, `QT_IM_MODULE`, `SDL_IM_MODULE`, `XMODIFIERS`) to improve on-screen keyboard activation across toolkits.
+
+### Browser kiosk service (`kiosk_browser_1.service`)
+After the graphical session and display layout are ready, `kiosk_browser_1.service` starts a fullscreen Chromium kiosk instance for display 1 and is configured with `Restart=always` so it automatically respawns if it exits or crashes.
+
+The service runs `/home/<app_user>/kiosk/kiosk_browser_1/launch_kiosk_browser_1.sh`, which launches Chromium in app mode (`--app`, `--start-maximized`) with startup prompts and browser chrome disabled. App+maximized mode is used instead of `--kiosk`/`--start-fullscreen` because Chromium's true kiosk mode uses exclusive Wayland fullscreen, which prevents compositor layer-shell surfaces (such as `squeekboard`) from rendering above the browser window — meaning the on-screen keyboard would always appear behind it. App mode with `--start-maximized` fills the display without claiming exclusive fullscreen, allowing the OSK to overlay the browser correctly. At launch time, the script queries Wayland output geometry (`wlr-randr`) for both output position and current mode so the window origin and size match `HDMI-A-1` reliably. The launcher enables Wayland IME support (`--enable-wayland-ime`), enables Chromium virtual keyboard and CSD features (`--enable-features=...,VirtualKeyboard,WaylandWindowDecorations`, `--enable-virtual-keyboard`), and forces touch input mode (`--touch-events=enabled`). `WaylandWindowDecorations` is critical: it causes Chromium to negotiate client-side decorations with labwc via the `xdg-decoration` protocol, and when maximized Chromium suppresses its own title bar — keeping the window borderless without relying on compositor-level window rules.
+
+Initial startup content is a local static page at `/home/<app_user>/kiosk/kiosk_browser_1/index.html`.
+
+That page includes a URL field and **Set start page** button. Enter a URL, tap the button, and Chromium will prompt once to choose a folder. Select `/home/<app_user>/kiosk/kiosk_browser_1/settings`; the page then writes `startup_url.txt` in that folder and immediately navigates to the entered URL.
+
+You can still set the URL manually by creating `/home/<app_user>/kiosk/kiosk_browser_1/settings/startup_url.txt` with a single line containing the URL (for example `https://example.com`).
+
+When present and valid (`http://`, `https://`, or `file://`), that value is used. If the file is missing or invalid, the launcher falls back to the local startup page.
+
+### Display 2 service (`kiosk_browser_2.service`)
+The script also creates a parallel display 2 browser setup:
+
+- `/home/<app_user>/kiosk/kiosk_browser_2/index.html`
+- `/home/<app_user>/kiosk/kiosk_browser_2/launch_kiosk_browser_2.sh`
+- `/etc/systemd/system/kiosk_browser_2.service`
+
+When the script runs with `--displays=2`, `kiosk_browser_2.service` is enabled automatically. For single-display installs (`--displays=1`), it is left disabled. Display 2 now uses the same startup page behavior as display 1, including the in-page URL field and **Set start page** flow that writes to `/home/<app_user>/kiosk/kiosk_browser_2/settings/startup_url.txt`. The display 2 launcher targets `HDMI-A-2` when present.
 
 ---
 
