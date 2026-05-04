@@ -28,6 +28,8 @@ chmod +x kiosk_cooker.sh
 
 `--no-rpi-connect` skips installation of Raspberry Pi Connect (`rpi-connect`).  Connect is installed and its user services enabled globally by default.
 
+`--no-touch-keyboard` disables installation and setup of the on-screen touch keyboard (`squeekboard`).
+
 `--edid=<name>` sets the EDID profile to use for the display(s).  Defaults to `1080P-2CH`.  Use `--edid=none` to skip EDID configuration entirely.
 
 `--displays=<1|2>` sets the number of HDMI displays to configure.  Defaults to `2`.
@@ -52,7 +54,7 @@ The script sets `DEBIAN_FRONTEND=noninteractive` for the duration of its executi
 | `dbus-user-session` | Provides a per-user D-Bus session bus, required by Wayland and labwc. |
 | `seatd` | A seat management daemon that grants unprivileged users access to input and display hardware without requiring root. |
 | `chromium-browser` / `chromium` | Chromium-based browser used for fullscreen kiosk operation. The script installs whichever package is available on the target OS. |
-| `squeekboard` _(when available)_ | Wayland on-screen keyboard. Started from the labwc `autostart` script so it is available for touch text input as soon as the compositor is ready. |
+| `squeekboard` _(when available and not disabled)_ | Wayland on-screen keyboard. Installed and managed as a dedicated systemd service (`kiosk-touch-keyboard.service`) so it can be enabled/disabled independently of the compositor and browser services. |
 | `rpi-connect` _(optional)_ | Full Raspberry Pi Connect package (not lite), required for screen sharing support. Installed by default; skipped when `--no-rpi-connect` is passed. |
 
 ### Boot configuration (`/boot/firmware/cmdline.txt`)
@@ -90,7 +92,12 @@ The kiosk session is built around three layered systemd services:
 
 **`kiosk-ui-init.service`** runs `kiosk-ui-init` after the session is confirmed ready. This script uses `wlr-randr` to enumerate connected HDMI outputs and apply the desired display layout — enabling the correct outputs, setting resolution and position. When an EDID profile is in use the resolution is forced explicitly; otherwise the compositor's negotiated mode is accepted. Applying layout from a separate script (rather than a labwc config file) gives fine-grained control and retries, which is important on hardware where outputs may not be immediately enumerable right as the compositor starts.
 
-**`labwc/autostart`** is a shell script that labwc executes at session start. When Raspberry Pi Connect is enabled, it imports the Wayland session environment into systemd and D-Bus so that `rpi-connect-wayvnc.service` can reach the compositor for screen sharing. When `squeekboard` is installed, the script also starts it here so the on-screen keyboard is available for touch text input.
+**`labwc/autostart`** is a shell script that labwc executes at session start. When Raspberry Pi Connect is enabled, it imports the Wayland session environment into systemd and D-Bus so that `rpi-connect-wayvnc.service` can reach the compositor for screen sharing.
+
+**`kiosk-touch-keyboard.service`** is an optional systemd service (created when `squeekboard` is available and `--no-touch-keyboard` is not used). It starts `squeekboard` after `kiosk-ui-init.service`, runs as the kiosk application user with the same Wayland environment as the browser services, and can be toggled independently:
+
+- Disable now and on boot: `sudo systemctl disable --now kiosk-touch-keyboard.service`
+- Enable now and on boot: `sudo systemctl enable --now kiosk-touch-keyboard.service`
 
 **`labwc/rc.xml`** is generated with three layers of compositor decoration suppression. `<core><decoration>client</decoration>` instructs labwc to prefer client-side decorations (CSD) globally, meaning windows negotiate their own frame via the `xdg-decoration` protocol rather than having the compositor draw a title bar. Chromium, when launched with `WaylandWindowDecorations` in `--enable-features`, requests CSD and suppresses its own title bar when maximized. A `<windowRule identifier="*" serverDecoration="no"/>` rule acts as a belt-and-suspenders fallback in case CSD negotiation fails for any window. Finally, a custom zero-pixel `kiosk` theme (`border.width: 0`, `titlebar.height: 0`) is installed under `~/.local/share/themes/kiosk/openbox-3/themerc` and referenced via `<theme><name>kiosk</name></theme>` — if server-side decorations are ever applied despite the above, they render invisibly.
 

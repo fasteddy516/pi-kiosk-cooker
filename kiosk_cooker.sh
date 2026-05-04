@@ -39,6 +39,11 @@ if [ ! -v rpi_connect ]; then
   rpi_connect=1
 fi
 
+# set default touch keyboard state if it hasn't been specified
+if [ ! -v touch_keyboard ]; then
+  touch_keyboard=1
+fi
+
 # load remembered arguments from memory file (if present), then let
 # command-line arguments override them by processing both in order
 cli_args=("$@")
@@ -78,6 +83,9 @@ for arg in "$@"; do
       ;;
     --no-rpi-connect)
       rpi_connect=0
+      ;;
+    --no-touch-keyboard)
+      touch_keyboard=0
       ;;
     --remember)
       remember=1
@@ -125,13 +133,18 @@ if [ -z "$browser_package" ]; then
 fi
 echo "* Using browser package: $browser_package"
 
-squeekboard_version="$(apt-cache policy squeekboard 2>/dev/null | awk '/Candidate:/ {print $2; exit}')"
-if [ -n "$squeekboard_version" ] && [ "$squeekboard_version" != "(none)" ]; then
-  touch_keyboard_package="squeekboard"
-  echo "* Using touch keyboard package: squeekboard"
+if [ $touch_keyboard -eq 1 ]; then
+  squeekboard_version="$(apt-cache policy squeekboard 2>/dev/null | awk '/Candidate:/ {print $2; exit}')"
+  if [ -n "$squeekboard_version" ] && [ "$squeekboard_version" != "(none)" ]; then
+    touch_keyboard_package="squeekboard"
+    echo "* Using touch keyboard package: squeekboard"
+  else
+    touch_keyboard_package=""
+    echo "! squeekboard not found in apt repos - touch keyboard will not be available"
+  fi
 else
   touch_keyboard_package=""
-  echo "! squeekboard not found in apt repos - touch keyboard will not be available"
+  echo "* Touch keyboard disabled via --no-touch-keyboard"
 fi
 
 kiosk_packages="labwc wlr-randr wayland-protocols xwayland dbus-user-session seatd $browser_package"
@@ -288,20 +301,9 @@ padding.height: 0
 titlebar.height: 0
 EOF
 chown -R $app_user:$app_user /home/$app_user/.local/share/themes
-if [ -n "$touch_keyboard_package" ]; then
-  labwc_touch_keyboard_autostart=$(cat <<'EOF'
-
-# Start the on-screen keyboard for touch input support.
-squeekboard >/dev/null 2>&1 &
-EOF
-)
-else
-  labwc_touch_keyboard_autostart=""
-fi
 cat << EOF > /home/$app_user/.config/labwc/autostart
 #!/bin/sh
 $labwc_connect_autostart
-$labwc_touch_keyboard_autostart
 EOF
 chown $app_user:$app_user /home/$app_user/.config/labwc/autostart
 chmod +x /home/$app_user/.config/labwc/autostart
@@ -883,6 +885,30 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 EOF
 
+# create systemd service for the on-screen touch keyboard (if applicable)
+if [ -n "$touch_keyboard_package" ]; then
+  cat << EOF > /etc/systemd/system/kiosk-touch-keyboard.service
+[Unit]
+Description=Kiosk on-screen touch keyboard
+Requires=kiosk-ui-init.service
+After=kiosk-ui-init.service
+
+[Service]
+Type=simple
+User=$app_user
+Group=$app_user
+Environment=HOME=/home/$app_user
+Environment=GTK_THEME=Adwaita:dark
+$wayland_client_env
+ExecStart=/usr/bin/squeekboard
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+fi
+
 # create systemd service to set up display layout after the session is ready
 cat << EOF > /etc/systemd/system/kiosk-ui-init.service
 [Unit]
@@ -937,6 +963,11 @@ systemctl daemon-reload
 systemctl enable kiosk-session.service
 systemctl enable kiosk-session-ready.service
 systemctl enable kiosk-ui-init.service
+if [ -n "$touch_keyboard_package" ]; then
+  systemctl enable kiosk-touch-keyboard.service
+else
+  systemctl disable --now kiosk-touch-keyboard.service >/dev/null 2>&1 || true
+fi
 systemctl enable kiosk_browser_1.service
 if [ "$displays" -eq 2 ]; then
   systemctl enable kiosk_browser_2.service
