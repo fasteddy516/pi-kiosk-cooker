@@ -70,13 +70,12 @@ The script sets `DEBIAN_FRONTEND=noninteractive` for the duration of its executi
 | `rpi-connect` _(optional)_ | Full Raspberry Pi Connect package (not lite), required for screen sharing support. Installed by default; skipped when `--no-rpi-connect` is passed. |
 
 ### Boot configuration (`/boot/firmware/cmdline.txt`)
-The kernel command line is modified idempotently — existing tokens managed by this script are removed before the desired set is appended, so re-running the script never duplicates entries.
+The kernel command line is modified idempotently — existing tokens managed by this script are removed before the desired set is appended, so re-running the script never duplicates entries. As part of this cleanup, any existing `quiet` and `console=tty<n>` tokens are removed.
 
 | Token | Purpose |
 |---|---|
 | `vt.global_cursor_default=0` | Hides the blinking text cursor on Linux virtual terminals (the console), so it doesn't show through the compositor before the graphical session starts. |
 | `fsck.repair=yes` | Automatically repairs filesystem errors on boot instead of dropping to a recovery prompt, keeping the kiosk unattended-safe. |
-| `console=tty3` | Redirects kernel console output to tty3 (a background virtual terminal), so boot messages don't appear on the primary display. |
 | `video=HDMI-A-1:1920x1080@60D` _(optional)_ | Forces the first HDMI output to 1920×1080 @ 60 Hz at the kernel/DRM level before any display manager is involved. Only added when an EDID profile is in use. |
 | `video=HDMI-A-2:1920x1080@60D` _(optional)_ | Same as above for the second HDMI output. Only added when an EDID profile is in use and `--displays=2`. |
 | `drm.edid_firmware=HDMI-A-1:<name>.edid` _(optional)_ | Overrides the EDID reported by the display on HDMI-1 with a firmware-supplied file. This is necessary when a connected display doesn't expose a valid EDID (e.g. a long HDMI run, a splitter, or a capture card), which would otherwise cause the output to be disabled or configured incorrectly. |

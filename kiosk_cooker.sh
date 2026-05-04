@@ -370,6 +370,7 @@ cmdline="$(cat /boot/firmware/cmdline.txt)"
 # Remove tokens we manage (repeatable-safe)
 cmdline="$(echo "$cmdline" \
   | sed -E \
+    -e 's/(^| )quiet( |$)/ /g' \
     -e 's/(^| )vt\.global_cursor_default=[^ ]+//g' \
     -e 's/(^| )console=tty[0-9]+//g' \
     -e 's/(^| )video=HDMI-A-1:[^ ]+//g' \
@@ -384,7 +385,7 @@ cmdline="$(echo "$cmdline" \
 cmdline="$(echo "$cmdline" | tr -s ' ' | sed -E 's/^ +| +$//g')"
 
 # Append our desired tokens exactly once
-cmdline="$cmdline vt.global_cursor_default=0 fsck.repair=yes console=tty3"
+cmdline="$cmdline vt.global_cursor_default=0 fsck.repair=yes"
 if [ "$edid" != "none" ]; then
   if [ "$displays" -eq 2 ]; then
     cmdline="$cmdline \
