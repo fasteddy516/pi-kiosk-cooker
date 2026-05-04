@@ -392,18 +392,40 @@ create_kiosk_browser_index() {
     body {
       min-height: 100vh;
       margin: 0;
+      position: relative;
+      isolation: isolate;
       display: grid;
       place-items: center;
       padding: clamp(1.25rem, 4vw, 3rem);
       color: var(--ink);
       font-family: "Noto Sans", "Segoe UI", sans-serif;
-      background-image: var(--watermark), var(--page-bg);
-      background-repeat: repeat, no-repeat;
-      background-size: 240px 160px, cover;
+      background-image: var(--page-bg);
+      background-repeat: no-repeat;
+      background-size: cover;
       background-attachment: fixed;
     }
 
+    body::before {
+      content: "";
+      position: fixed;
+      inset: -160px -240px;
+      z-index: 0;
+      pointer-events: none;
+      background-image: var(--watermark);
+      background-repeat: repeat;
+      background-size: 240px 160px;
+      will-change: transform;
+      animation: drift 15s linear infinite;
+    }
+
+    @keyframes drift {
+      from { transform: translate3d(0, 0, 0); }
+      to   { transform: translate3d(240px, 160px, 0); }
+    }
+
     main {
+      position: relative;
+      z-index: 1;
       width: min(90vw, 900px);
       padding: clamp(2rem, 5vw, 3rem);
       border-radius: 1.2rem;
@@ -416,6 +438,7 @@ create_kiosk_browser_index() {
 
     .repo-card {
       position: fixed;
+      z-index: 1;
       left: 50%;
       bottom: clamp(1rem, 2.5vw, 2rem);
       transform: translateX(-50%);
