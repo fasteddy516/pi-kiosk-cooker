@@ -97,7 +97,7 @@ A dedicated user account (default: `kiosk`) is created for running the kiosk ses
 ### Wayland session setup
 The kiosk session is built around three layered systemd services:
 
-**`kiosk-session.service`** starts the Wayland compositor (`labwc`) directly on tty1, running as the kiosk user. By running `labwc` through `session_start.sh` (which wraps it in `dbus-run-session`), the compositor gets its own D-Bus session bus and the correct Wayland/XDG environment variables. Getty on tty1 is disabled so it doesn't conflict with the compositor claiming that terminal.
+**`kiosk-session.service`** starts the Wayland compositor (`labwc`) directly on tty1, running as the kiosk user. By running `labwc` through `session_start.sh` (which wraps it in `dbus-run-session`), the compositor gets its own D-Bus session bus and the correct Wayland/XDG environment variables. Getty on tty1 is fully disabled (`disable --now`) and masked so a console login prompt does not return and cannot conflict with the compositor claiming that terminal.
 
 **`kiosk-session-ready.service`** runs `wait-for-gui-ready`, a script that polls for the Wayland socket (`$XDG_RUNTIME_DIR/wayland-0`) and then confirms the compositor is responsive via `wlr-randr`. This gate prevents dependent services from trying to interact with the compositor before it is actually ready.
 

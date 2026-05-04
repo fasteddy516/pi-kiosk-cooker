@@ -440,8 +440,9 @@ app_uid=$(id -u "$app_user")
 # enable seatd for Wayland compositor seat management
 run_step "Enabling seatd service" systemctl enable seatd
 
-# disable getty on tty1 to prevent interference with the kiosk compositor session
-run_step "Disabling getty on tty1" systemctl disable getty@tty1.service
+# fully disable getty on tty1 to prevent any console login prompt from returning
+run_step "Stopping/disabling getty on tty1" systemctl disable --now getty@tty1.service
+run_step "Masking getty on tty1" systemctl mask getty@tty1.service
 
 # create compositor/session startup files
 run_step "Creating kiosk config directories" su "$app_user" -c "mkdir -p ~/.config ~/kiosk"
