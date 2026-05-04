@@ -125,18 +125,13 @@ if [ -z "$browser_package" ]; then
 fi
 echo "* Using browser package: $browser_package"
 
-touch_keyboard_package=""
-for candidate in squeekboard maliit-keyboard; do
-  candidate_version="$(apt-cache policy "$candidate" 2>/dev/null | awk '/Candidate:/ {print $2; exit}')"
-  if [ -n "$candidate_version" ] && [ "$candidate_version" != "(none)" ]; then
-    touch_keyboard_package="$candidate"
-    break
-  fi
-done
-if [ -n "$touch_keyboard_package" ]; then
-  echo "* Using touch keyboard package: $touch_keyboard_package"
+squeekboard_version="$(apt-cache policy squeekboard 2>/dev/null | awk '/Candidate:/ {print $2; exit}')"
+if [ -n "$squeekboard_version" ] && [ "$squeekboard_version" != "(none)" ]; then
+  touch_keyboard_package="squeekboard"
+  echo "* Using touch keyboard package: squeekboard"
 else
-  echo "* Touch keyboard package not found in apt repos (tried: squeekboard, maliit-keyboard)"
+  touch_keyboard_package=""
+  echo "! squeekboard not found in apt repos - touch keyboard will not be available"
 fi
 
 kiosk_packages="labwc wlr-randr wayland-protocols xwayland dbus-user-session seatd $browser_package"
@@ -290,17 +285,10 @@ padding.height: 0
 titlebar.height: 0
 EOF
 chown -R $app_user:$app_user /home/$app_user/.local/share/themes
-if [ "$touch_keyboard_package" = "maliit-keyboard" ]; then
+if [ -n "$touch_keyboard_package" ]; then
   labwc_touch_keyboard_autostart=$(cat <<'EOF'
 
-# Start the Maliit server on Wayland for text-input pop-up support.
-QT_QPA_PLATFORM=wayland maliit-server >/tmp/maliit-server.log 2>&1 &
-EOF
-)
-elif [ "$touch_keyboard_package" = "squeekboard" ]; then
-  labwc_touch_keyboard_autostart=$(cat <<'EOF'
-
-# Start the on-screen keyboard service for text-input pop-up support.
+# Start the on-screen keyboard for touch input support.
 squeekboard >/dev/null 2>&1 &
 EOF
 )
