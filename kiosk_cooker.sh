@@ -252,6 +252,10 @@ systemctl disable getty@tty1.service
 # create compositor/session startup files
 su "$app_user" -c "mkdir -p ~/.config ~/kiosk"
 loginctl enable-linger "$app_user" || true
+if [ $rpi_connect -eq 1 ]; then
+  # Ensure a user manager exists now so user services can be started before first login.
+  systemctl start "user@$app_uid.service" >/dev/null 2>&1 || true
+fi
 
 # set system-wide dark mode preference for GTK apps (including squeekboard)
 su "$app_user" -c "gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'" 2>/dev/null || true
@@ -263,6 +267,10 @@ if [ $rpi_connect -eq 1 ]; then
   if [ -f /usr/lib/systemd/user/rpi-connect-wayvnc.service ]; then
     systemctl --global enable rpi-connect-wayvnc.service
   fi
+  if [ -f /usr/lib/systemd/user/rpi-connect-signin.path ]; then
+    systemctl --global enable rpi-connect-signin.path
+  fi
+  su "$app_user" -c "XDG_RUNTIME_DIR=/run/user/$app_uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$app_uid/bus systemctl --user start rpi-connect.service rpi-connect-wayvnc.service rpi-connect-signin.path" >/dev/null 2>&1 || true
   labwc_connect_autostart=$(cat <<'EOF'
 
 # Keep user systemd/dbus environment aligned with this Wayland session.
@@ -277,6 +285,7 @@ else
   echo "* Disabling Raspberry Pi Connect user services"
   systemctl --global disable rpi-connect.service >/dev/null 2>&1 || true
   systemctl --global disable rpi-connect-wayvnc.service >/dev/null 2>&1 || true
+  systemctl --global disable rpi-connect-signin.path >/dev/null 2>&1 || true
   labwc_connect_autostart=""
 fi
 su "$app_user" -c "mkdir -p ~/.config/labwc"
@@ -1138,10 +1147,17 @@ fi
 if [ $rpi_connect -eq 1 ]; then
   echo ""
   echo "*** IMPORTANT: Raspberry Pi Connect requires a one-time sign-in to link this"
-  echo "    device to your Raspberry Pi ID.  Run the following command and visit the"
-  echo "    URL it displays to authorize this device:"
+  echo "    device to your Raspberry Pi ID.  Log in as '$app_user' and run:"
   echo ""
-  echo "    sudo -u $app_user rpi-connect signin"
+  echo "    rpi-connect signin"
+  echo ""
+  echo "    If you are signed in as another admin user, run these commands instead:"
+  echo ""
+  echo "    sudo systemctl start user@$app_uid.service"
+  echo "    sudo -u $app_user XDG_RUNTIME_DIR=/run/user/$app_uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$app_uid/bus rpi-connect signin"
+  echo ""
+  echo "    Visit the"
+  echo "    URL it displays to authorize this device:"
   echo ""
 fi
 
