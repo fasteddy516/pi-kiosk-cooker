@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# kiosk_cooker version (used by script and generated UI text)
+SCRIPT_VERSION="0.9.0"
+
 # ensure the script is being run as root
 if [ "$(id -u)" -ne 0 ]; then
   echo "! This script must be run as root (i.e. with sudo)"
@@ -625,7 +628,7 @@ create_kiosk_browser_index() {
   <aside class="repo-card">
     <div class="repo-card-row">
       <div class="repo-card-left">
-        Raspberry Pi Kiosk Cooker by <a href="https://github.com/fasteddy516" target="_blank" rel="noopener noreferrer">fasteddy516</a>
+        Raspberry Pi Kiosk Cooker ${SCRIPT_VERSION} by <a href="https://github.com/fasteddy516" target="_blank" rel="noopener noreferrer">fasteddy516</a>
       </div>
       <div class="repo-card-right">
         <a href="https://github.com/fasteddy516/pi-kiosk-cooker" target="_blank" rel="noopener noreferrer">github.com/fasteddy516/pi-kiosk-cooker</a>
