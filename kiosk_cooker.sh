@@ -350,6 +350,23 @@ run_step "Removing orphaned packages (this may take a few minutes)" apt autoremo
 # disable splash screen (1 = disabled)
 run_step_allow_nonzero "Disabling boot splash" raspi-config nonint do_boot_splash 1
 
+# Ensure firmware splash logos are disabled as well. On some images,
+# raspi-config alone may not reliably set this in config.txt.
+step_begin "Ensuring firmware splash logos are disabled"
+if grep -Eq '^[[:space:]]*#?[[:space:]]*disable_splash=' /boot/firmware/config.txt; then
+  if run_quiet sed -E -i 's/^[[:space:]]*#?[[:space:]]*disable_splash=.*/disable_splash=1/' /boot/firmware/config.txt; then
+    step_ok
+  else
+    step_error "Unable to update disable_splash in /boot/firmware/config.txt"
+  fi
+else
+  if run_quiet sh -c "printf '\n# Added by pi-kiosk-cooker to hide firmware boot logos\ndisable_splash=1\n' >> /boot/firmware/config.txt"; then
+    step_ok
+  else
+    step_error "Unable to append disable_splash to /boot/firmware/config.txt"
+  fi
+fi
+
 # disable overscan for active hdmi outputs
 run_step_allow_nonzero "Disabling overscan on HDMI-A-1" raspi-config nonint do_overscan_kms 1 1
 if [ $displays -eq 2 ]; then
@@ -370,6 +387,9 @@ cmdline="$(cat /boot/firmware/cmdline.txt)"
 # Remove tokens we manage (repeatable-safe)
 cmdline="$(echo "$cmdline" \
   | sed -E \
+    -e 's/(^| )quiet( |$)/ /g' \
+    -e 's/(^| )logo\.nologo( |$)/ /g' \
+    -e 's/(^| )systemd\.getty_auto=[^ ]+//g' \
     -e 's/(^| )vt\.global_cursor_default=[^ ]+//g' \
     -e 's/(^| )console=tty[0-9]+//g' \
     -e 's/(^| )video=HDMI-A-1:[^ ]+//g' \
@@ -384,7 +404,7 @@ cmdline="$(echo "$cmdline" \
 cmdline="$(echo "$cmdline" | tr -s ' ' | sed -E 's/^ +| +$//g')"
 
 # Append our desired tokens exactly once
-cmdline="$cmdline vt.global_cursor_default=0 fsck.repair=yes console=tty3"
+cmdline="$cmdline vt.global_cursor_default=0 fsck.repair=yes logo.nologo systemd.getty_auto=no"
 if [ "$edid" != "none" ]; then
   if [ "$displays" -eq 2 ]; then
     cmdline="$cmdline \
@@ -439,8 +459,31 @@ app_uid=$(id -u "$app_user")
 # enable seatd for Wayland compositor seat management
 run_step "Enabling seatd service" systemctl enable seatd
 
-# disable getty on tty1 to prevent interference with the kiosk compositor session
-run_step "Disabling getty on tty1" systemctl disable getty@tty1.service
+# fully disable getty on tty1 to prevent any console login prompt from returning
+run_step "Stopping/disabling getty on tty1" systemctl disable --now getty@tty1.service
+run_step "Masking getty on tty1" systemctl mask getty@tty1.service
+
+# disable automatic virtual-console getty spawning to prevent tty login prompts
+# from reappearing when the graphical session stops during reboot/shutdown.
+step_begin "Disabling automatic virtual-console getty spawning"
+if run_quiet sed -E -i \
+  -e 's/^[[:space:]]*#?[[:space:]]*NAutoVTs=.*/NAutoVTs=0/' \
+  -e 's/^[[:space:]]*#?[[:space:]]*ReserveVT=.*/ReserveVT=0/' \
+  /etc/systemd/logind.conf; then
+  if ! grep -Eq '^[[:space:]]*NAutoVTs=' /etc/systemd/logind.conf; then
+    if ! run_quiet sh -c "printf '\nNAutoVTs=0\n' >> /etc/systemd/logind.conf"; then
+      step_error "Unable to set NAutoVTs in /etc/systemd/logind.conf"
+    fi
+  fi
+  if ! grep -Eq '^[[:space:]]*ReserveVT=' /etc/systemd/logind.conf; then
+    if ! run_quiet sh -c "printf 'ReserveVT=0\n' >> /etc/systemd/logind.conf"; then
+      step_error "Unable to set ReserveVT in /etc/systemd/logind.conf"
+    fi
+  fi
+  step_ok
+else
+  step_error "Unable to update /etc/systemd/logind.conf"
+fi
 
 # create compositor/session startup files
 run_step "Creating kiosk config directories" su "$app_user" -c "mkdir -p ~/.config ~/kiosk"
@@ -512,6 +555,10 @@ cat << 'EOF' > /home/$app_user/.config/labwc/rc.xml
     <name>kiosk</name>
   </theme>
   <windowRules>
+    <!-- Hide cursor on first mapped window so kiosk starts pointer-free. -->
+    <windowRule identifier="*" matchOnce="true">
+      <action name="HideCursor" />
+    </windowRule>
     <!-- Belt-and-suspenders: disable SSD for every window regardless of app_id. -->
     <windowRule identifier="*" serverDecoration="no" />
   </windowRules>

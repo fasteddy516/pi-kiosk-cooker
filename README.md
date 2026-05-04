@@ -70,13 +70,14 @@ The script sets `DEBIAN_FRONTEND=noninteractive` for the duration of its executi
 | `rpi-connect` _(optional)_ | Full Raspberry Pi Connect package (not lite), required for screen sharing support. Installed by default; skipped when `--no-rpi-connect` is passed. |
 
 ### Boot configuration (`/boot/firmware/cmdline.txt`)
-The kernel command line is modified idempotently — existing tokens managed by this script are removed before the desired set is appended, so re-running the script never duplicates entries.
+The kernel command line is modified idempotently — existing tokens managed by this script are removed before the desired set is appended, so re-running the script never duplicates entries. As part of this cleanup, any existing `quiet` and `console=tty<n>` tokens are removed.
 
 | Token | Purpose |
 |---|---|
 | `vt.global_cursor_default=0` | Hides the blinking text cursor on Linux virtual terminals (the console), so it doesn't show through the compositor before the graphical session starts. |
 | `fsck.repair=yes` | Automatically repairs filesystem errors on boot instead of dropping to a recovery prompt, keeping the kiosk unattended-safe. |
-| `console=tty3` | Redirects kernel console output to tty3 (a background virtual terminal), so boot messages don't appear on the primary display. |
+| `logo.nologo` | Suppresses Linux kernel framebuffer logos during early boot (including Raspberry Pi kernel logos), reducing boot-time branding artifacts on-screen. |
+| `systemd.getty_auto=no` | Disables systemd's automatic getty generation from the kernel command line, reducing chances of VT login prompts briefly reappearing during shutdown/reboot transitions. |
 | `video=HDMI-A-1:1920x1080@60D` _(optional)_ | Forces the first HDMI output to 1920×1080 @ 60 Hz at the kernel/DRM level before any display manager is involved. Only added when an EDID profile is in use. |
 | `video=HDMI-A-2:1920x1080@60D` _(optional)_ | Same as above for the second HDMI output. Only added when an EDID profile is in use and `--displays=2`. |
 | `drm.edid_firmware=HDMI-A-1:<name>.edid` _(optional)_ | Overrides the EDID reported by the display on HDMI-1 with a firmware-supplied file. This is necessary when a connected display doesn't expose a valid EDID (e.g. a long HDMI run, a splitter, or a capture card), which would otherwise cause the output to be disabled or configured incorrectly. |
@@ -86,9 +87,11 @@ The kernel command line is modified idempotently — existing tokens managed by 
 ### `raspi-config` settings
 Three display-related settings are applied via `raspi-config`'s non-interactive interface:
 
-- **Splash screen disabled** — The Raspberry Pi firmware splash screen is turned off so boot proceeds cleanly to the kiosk compositor.
+- **Plymouth splash disabled** — The standard Plymouth splash is disabled.
 - **Overscan/underscan disabled** (both HDMI outputs) — Disables the legacy overscan compensation that adds black borders around the image, which is unnecessary on modern displays.
 - **Screen blanking disabled** — Prevents the display from going blank after a period of inactivity, which is undesirable for a kiosk.
+
+In addition, the script directly enforces `disable_splash=1` in `/boot/firmware/config.txt` to disable the early firmware Raspberry logo splash reliably across Raspberry Pi OS variants.
 
 ### Kiosk application user
 A dedicated user account (default: `kiosk`) is created for running the kiosk session and all associated applications. Running as a non-root user limits the blast radius of any application-level issue and is required by `seatd` and the Wayland session model. The user is added to the `video`, `render`, `input`, and `seat` groups so it can access the GPU, input devices, and seat management without elevated privileges.
@@ -98,7 +101,9 @@ A dedicated user account (default: `kiosk`) is created for running the kiosk ses
 ### Wayland session setup
 The kiosk session is built around three layered systemd services:
 
-**`kiosk-session.service`** starts the Wayland compositor (`labwc`) directly on tty1, running as the kiosk user. By running `labwc` through `session_start.sh` (which wraps it in `dbus-run-session`), the compositor gets its own D-Bus session bus and the correct Wayland/XDG environment variables. Getty on tty1 is disabled so it doesn't conflict with the compositor claiming that terminal.
+**`kiosk-session.service`** starts the Wayland compositor (`labwc`) directly on tty1, running as the kiosk user. By running `labwc` through `session_start.sh` (which wraps it in `dbus-run-session`), the compositor gets its own D-Bus session bus and the correct Wayland/XDG environment variables. Getty on tty1 is fully disabled (`disable --now`) and masked so a console login prompt does not return and cannot conflict with the compositor claiming that terminal. To harden this further, the script also sets `NAutoVTs=0` and `ReserveVT=0` in `/etc/systemd/logind.conf` to stop automatic virtual-console getty spawning.
+
+At compositor startup, labwc is configured to run the `HideCursor` action on first window map so the pointer disappears automatically without waiting for an initial touch event.
 
 **`kiosk-session-ready.service`** runs `wait-for-gui-ready`, a script that polls for the Wayland socket (`$XDG_RUNTIME_DIR/wayland-0`) and then confirms the compositor is responsive via `wlr-randr`. This gate prevents dependent services from trying to interact with the compositor before it is actually ready.
 
