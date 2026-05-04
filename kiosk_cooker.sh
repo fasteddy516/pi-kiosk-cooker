@@ -11,6 +11,7 @@ fi
 if [ "$supports_color" -eq 1 ]; then
   C_GREEN='\033[32m'
   C_RED='\033[31m'
+  C_BRIGHT_RED='\033[91m'
   C_YELLOW='\033[93m'
   C_WHITE='\033[37m'
   C_BRIGHT_WHITE='\033[97m'
@@ -19,6 +20,7 @@ if [ "$supports_color" -eq 1 ]; then
 else
   C_GREEN=''
   C_RED=''
+  C_BRIGHT_RED=''
   C_YELLOW=''
   C_WHITE=''
   C_BRIGHT_WHITE=''
@@ -1395,13 +1397,16 @@ if [ $rpi_connect -eq 1 ]; then
   print_line "       sudo -u $app_user XDG_RUNTIME_DIR=/run/user/$app_uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$app_uid/bus rpi-connect signin${C_RESET}"
   print_line ""
   print_line "${C_BRIGHT_WHITE}    Visit the URL it displays to authorize this device.${C_RESET}"
-  print_line ""
 fi
 
 # all done - countdown to reboot
 if [ $reboot -eq 1 ]; then
   print_line ""
-  for i in $(seq 30 -1 1) ; do echo -ne "\r*** Rebooting in $i seconds.  (CTRL-C to cancel) ***" ; sleep 1 ; done
+  for i in $(seq 30 -1 1) ; do echo -ne "\r${C_BRIGHT_RED}*** Rebooting in $i seconds.  (CTRL-C to cancel) ***${C_RESET}" ; sleep 1 ; done
   print_line ""
   run_step "Rebooting system" reboot
+else
+  print_line ""
+  print_line "${C_YELLOW}*** A reboot is strongly suggested before using the kiosk setup.  Run: sudo reboot${C_RESET}"
+  print_line ""
 fi
