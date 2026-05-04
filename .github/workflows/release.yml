@@ -1,0 +1,44 @@
+# .github/workflows/release.yml
+name: "Draft Release and Version Bump"
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Semantic version (e.g., 1.0.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  update-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      # Checkout the repository
+      - name: "Checkout Code"
+        uses: actions/checkout@v6
+
+      # Update version in kiosk_cooker.sh
+      - name: "Update Version"
+        run: |
+          sed -i "s/SCRIPT_VERSION=\".*\"/SCRIPT_VERSION=\"${{ github.event.inputs.version }}\"/" kiosk_cooker.sh
+
+      # Commit, tag, and push in one operation
+      - name: "Commit, Tag, and Push"
+        run: |
+          git config user.name "GitHub Actions Bot"
+          git config user.email "actions@github.com"
+          git commit -am "Bump version to ${{ github.event.inputs.version }}"
+          git tag -a "${{ github.event.inputs.version }}" -m "Release ${{ github.event.inputs.version }}"
+          git push --follow-tags
+
+      # Create Draft Release using the built-in GitHub CLI
+      - name: "Create Draft Release"
+        run: |
+          gh release create "${{ github.event.inputs.version }}" \
+            --title "pi-kiosk-cooker ${{ github.event.inputs.version }}" \
+            --draft \
+            --generate-notes \
+            kiosk_cooker.sh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
