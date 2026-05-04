@@ -16,22 +16,17 @@ fi
 
 # set default application username if it hasn't been specified
 if [ ! -v app_user ]; then
-  app_user=pi
-fi
-
-# set default application password if it hasn't been specified
-if [ ! -v app_password ]; then
-  app_password=raspberry
+  app_user=kiosk
 fi
 
 # set default edid if it hasn't been specified
 if [ ! -v edid ]; then
-  edid=1080P-2CH
+  edid=none
 fi
 
 # set default number of displays if it hasn't been specified
 if [ ! -v displays ]; then
-  displays=2
+  displays=1
 fi
 
 # set default Raspberry Pi Connect install state if it hasn't been specified
@@ -96,6 +91,12 @@ for arg in "$@"; do
       ;;
   esac
 done
+
+# require a non-empty password to be explicitly provided
+if [ -z "${app_password:-}" ]; then
+  echo "! Missing required argument: --password=<password>"
+  exit 1
+fi
 
 # write remembered arguments (all args except --remember itself)
 if [ $remember -eq 1 ]; then

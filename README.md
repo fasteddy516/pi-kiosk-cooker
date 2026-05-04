@@ -10,19 +10,19 @@ I use this script for hobby/personal projects in non-critical, controlled enviro
 
 ## Installation
 ### The simple way
-`curl -sS "https://raw.githubusercontent.com/fasteddy516/pi-kiosk-cooker/main/kiosk_cooker.sh" | sudo bash -s -- --user=<user> --password=<pass>`
+`curl -sS "https://raw.githubusercontent.com/fasteddy516/pi-kiosk-cooker/main/kiosk_cooker.sh" | sudo bash -s -- --password=<pass>`
 
 ### The safer way
 ```
 wget https://github.com/fasteddy516/pi-kiosk-cooker/raw/main/kiosk_cooker.sh
 chmod +x kiosk_cooker.sh
-./kiosk_cooker.sh --user=<user> --password=<pass>
+./kiosk_cooker.sh --password=<pass>
 ```
 
 ## Available arguments
-`--user=<user>` sets the desired kiosk application user name
+`--user=<user>` sets the desired kiosk application user name.  Defaults to `kiosk`.
 
-`--password=<password>` sets the desired password for the kiosk application user
+`--password=<password>` sets the desired password for the kiosk application user.  Required argument (no default).
 
 `--no-reboot` disables the automatic reboot at the end of the script.  Useful when chaining this script into another application's install script.
 
@@ -30,9 +30,9 @@ chmod +x kiosk_cooker.sh
 
 `--no-touch-keyboard` disables installation and setup of the on-screen touch keyboard (`squeekboard`).
 
-`--edid=<name>` sets the EDID profile to use for the display(s).  Defaults to `1080P-2CH`.  Use `--edid=none` to skip EDID configuration entirely.
+`--edid=<name>` sets the EDID profile to use for the display(s).  Defaults to `none` (skip EDID configuration).
 
-`--displays=<1|2>` sets the number of HDMI displays to configure.  Defaults to `2`.
+`--displays=<1|2>` sets the number of HDMI displays to configure.  Defaults to `1`.
 
 `--remember` saves all other arguments provided on this run to a `kiosk_cooker.memory` file next to the script.  On subsequent runs, those saved arguments are automatically prepended to the command line so you don't have to repeat them.  Explicitly provided arguments always override saved ones.  Delete `kiosk_cooker.memory` to clear the saved arguments.
 
@@ -79,7 +79,7 @@ Three display-related settings are applied via `raspi-config`'s non-interactive 
 - **Screen blanking disabled** — Prevents the display from going blank after a period of inactivity, which is undesirable for a kiosk.
 
 ### Kiosk application user
-A dedicated user account (default: `pi`) is created for running the kiosk session and all associated applications. Running as a non-root user limits the blast radius of any application-level issue and is required by `seatd` and the Wayland session model. The user is added to the `video`, `render`, `input`, and `seat` groups so it can access the GPU, input devices, and seat management without elevated privileges.
+A dedicated user account (default: `kiosk`) is created for running the kiosk session and all associated applications. Running as a non-root user limits the blast radius of any application-level issue and is required by `seatd` and the Wayland session model. The user is added to the `video`, `render`, `input`, and `seat` groups so it can access the GPU, input devices, and seat management without elevated privileges.
 
 `loginctl enable-linger` is called for this user so that user-level systemd services (including D-Bus) start at boot without requiring an interactive login session.
 
