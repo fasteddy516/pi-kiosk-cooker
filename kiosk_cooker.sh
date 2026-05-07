@@ -1028,8 +1028,6 @@ EOF
 create_kiosk_browser_launcher() {
   local browser_num="$1"
   local output_name="$2"
-  local fallback_window_pos="$3"
-  local fallback_window_size="$4"
 
   cat << EOF > /home/$app_user/kiosk/kiosk_browser_${browser_num}/launch_kiosk_browser_${browser_num}.sh
 #!/usr/bin/env bash
@@ -1054,9 +1052,7 @@ PROFILE_DIR="\$APP_DIR/profile"
 URL_FILE="\$APP_DIR/settings/startup_url.txt"
 DEFAULT_URL="file://\$APP_DIR/index.html"
 START_URL="\$DEFAULT_URL"
-OUTPUT_NAME="${output_name}"
-FALLBACK_WINDOW_POS="${fallback_window_pos}"
-FALLBACK_WINDOW_SIZE="${fallback_window_size}"
+OUTPUT_NAME="${output_name}-Maximized"
 
 if [ -f "\$URL_FILE" ]; then
   raw_url="\$(head -n 1 "\$URL_FILE" | tr -d '\r')"
@@ -1075,46 +1071,6 @@ fi
 
 mkdir -p "\$PROFILE_DIR"
 
-get_output_position() {
-  local output_name="\$1"
-  local pos
-  pos="\$(wlr-randr 2>/dev/null | awk -v out="\$output_name" '
-    \$1 == out { in_out = 1; next }
-    in_out && \$1 == "Position:" { print \$2; exit }
-    in_out && /^[A-Za-z0-9_.-]+\$/ { in_out = 0 }
-  ')"
-  if [[ "\$pos" =~ ^[0-9]+,[0-9]+\$ ]]; then
-    echo "\$pos"
-    return 0
-  fi
-  return 1
-}
-
-get_output_size() {
-  local output_name="\$1"
-  local mode
-  mode="\$(wlr-randr 2>/dev/null | awk -v out="\$output_name" '
-    \$1 == out { in_out = 1; next }
-    in_out && \$1 == "Current" && \$2 == "mode:" { print \$3; exit }
-    in_out && /^[A-Za-z0-9_.-]+\$/ { in_out = 0 }
-  ')"
-  if [[ "\$mode" =~ ^[0-9]+x[0-9]+\$ ]]; then
-    echo "\${mode/x/,}"
-    return 0
-  fi
-  return 1
-}
-
-WINDOW_POS="\$FALLBACK_WINDOW_POS"
-if resolved_pos="\$(get_output_position "\$OUTPUT_NAME")"; then
-  WINDOW_POS="\$resolved_pos"
-fi
-
-WINDOW_SIZE="\$FALLBACK_WINDOW_SIZE"
-if resolved_size="\$(get_output_size "\$OUTPUT_NAME")"; then
-  WINDOW_SIZE="\$resolved_size"
-fi
-
 exec "\$BROWSER_BIN" \
   --ozone-platform=wayland \
   --enable-features=UseOzonePlatform,VirtualKeyboard,WaylandWindowDecorations,WebContentsForceDark \
@@ -1124,15 +1080,13 @@ exec "\$BROWSER_BIN" \
   --force-dark-mode \
   --touch-events=enabled \
   --app="\$START_URL" \
-  --window-position="\$WINDOW_POS" \
-  --window-size="\$WINDOW_SIZE" \
-  --start-maximized \
   --no-first-run \
   --no-default-browser-check \
   --disable-session-crashed-bubble \
   --disable-infobars \
   --check-for-update-interval=31536000 \
-  --user-data-dir="\$PROFILE_DIR"
+  --user-data-dir="\$PROFILE_DIR" \
+  --profile-directory="\$OUTPUT_NAME"
 EOF
 
   chown $app_user:$app_user /home/$app_user/kiosk/kiosk_browser_${browser_num}/launch_kiosk_browser_${browser_num}.sh
@@ -1142,8 +1096,8 @@ EOF
 run_step "Generating browser 1 local start page" create_kiosk_browser_index 1 250
 run_step "Generating browser 2 local start page" create_kiosk_browser_index 2 160
 
-run_step "Generating browser 1 launcher" create_kiosk_browser_launcher 1 "HDMI-A-1" "0,0" "1920,1080"
-run_step "Generating browser 2 launcher" create_kiosk_browser_launcher 2 "HDMI-A-2" "1920,0" "1920,1080"
+run_step "Generating browser 1 launcher" create_kiosk_browser_launcher 1 "HDMI-A-1"
+run_step "Generating browser 2 launcher" create_kiosk_browser_launcher 2 "HDMI-A-2"
 
 # create wait-for-gui-ready script to ensure the compositor is ready before starting the kiosk application
 step_begin "Writing wait-for-gui-ready helper"
