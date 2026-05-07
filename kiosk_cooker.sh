@@ -550,17 +550,56 @@ cat << 'EOF' > /home/$app_user/.config/labwc/rc.xml
     <!-- Prefer client-side decorations so Chromium negotiates via xdg-decoration. -->
     <decoration>client</decoration>
   </core>
+
   <theme>
     <!-- Zero-size fallback theme: if SSD is applied despite the above, it renders invisibly. -->
     <name>kiosk</name>
   </theme>
+
   <windowRules>
+
     <!-- Hide cursor on first mapped window so kiosk starts pointer-free. -->
     <windowRule identifier="*" matchOnce="true">
       <action name="HideCursor" />
     </windowRule>
+
     <!-- Belt-and-suspenders: disable SSD for every window regardless of app_id. -->
     <windowRule identifier="*" serverDecoration="no" />
+
+    <!-- Move to output HDMI-A-1 based on app_id -->
+    <windowRule identifier="*HDMI-A-1*">
+      <action name="MoveToOutput" output="HDMI-A-1" />
+      <skipWindowSwitcher>yes</skipWindowSwitcher>
+    </windowRule>
+
+    <!-- Move to output HDMI-A-1 based on window title -->
+    <windowRule title="*HDMI-A-1*">
+      <action name="MoveToOutput" output="HDMI-A-1" />
+      <skipWindowSwitcher>yes</skipWindowSwitcher>
+    </windowRule>
+
+    <!-- Move to output HDMI-A-2 based on app_id -->
+    <windowRule identifier="*HDMI-A-2*">
+      <action name="MoveToOutput" output="HDMI-A-2" />
+      <skipWindowSwitcher>yes</skipWindowSwitcher>
+    </windowRule>
+
+    <!-- Move to output HDMI-A-2 based on window title -->
+    <windowRule title="*HDMI-A-2*">
+      <action name="MoveToOutput" output="HDMI-A-2" />
+      <skipWindowSwitcher>yes</skipWindowSwitcher>
+    </windowRule>
+
+    <!-- Maximize based on app_id -->
+    <windowRule identifier="*Maximized*">
+      <action name="Maximize" />
+    </windowRule>
+
+    <!-- Maximize based on window title -->
+    <windowRule title="*Maximized*">
+      <action name="Maximize" />
+    </windowRule>
+
   </windowRules>
 </labwc_config>
 EOF
