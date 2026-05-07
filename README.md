@@ -50,6 +50,18 @@ chmod +x kiosk_cooker.sh
 > Any password passed via `--password` will be stored as **plaintext** in `kiosk_cooker.memory`.  Avoid using `--remember` together with `--password` in security-sensitive environments, or delete the memory file once the password is no longer needed.
 
 
+## Window Positioning
+This kiosk environment uses compositor rules (labwc `WindowRules` inside `~/.config/labwc/rc.xml`) to control application window placement as follows:
+
+1) Any application with an identifier (`app_id`) *or* window title that contains `HDMI-A-1` will be automatically moved to that output/display.
+
+2) Any application with an identifier *or* window title that contains `HDMI-A-2` will be automatically moved to that output/display.
+
+3) Any application with an identifier *or* window title that contains `Maximized` will be maximized on whatever display it is displayed on.
+
+The full screen browser demo applications included in this script have identifiers that contain `HDMI-A-1-Maximized` and `HDMI-A-2-Maximized` to ensure they get routed to the correct output and take up all of the available screen real estate.  
+
+
 ## Under the hood
 
 The following is a breakdown of every significant action the script performs, and why.
