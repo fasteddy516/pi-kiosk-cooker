@@ -200,6 +200,11 @@ if [ ! -v displays ]; then
   displays=1
 fi
 
+# set default video kernel command-line entries if they haven't been specified
+if [ ! -v video ]; then
+  video=()
+fi
+
 # set default edid if it hasn't been specified
 if [ ! -v edid ]; then
   edid=none
@@ -255,6 +260,9 @@ for arg in "$@"; do
       if [ "$displays" != "1" ] && [ "$displays" != "2" ]; then
         fail "Invalid value for --displays: '$displays' (must be 1 or 2)"
       fi
+      ;;
+    --video=*)
+      video+=("${arg#*=}")
       ;;
     --edid=*)
       edid="${arg#*=}"
@@ -400,32 +408,41 @@ cmdline="$(echo "$cmdline" \
     -e 's/(^| )systemd\.getty_auto=[^ ]+//g' \
     -e 's/(^| )vt\.global_cursor_default=[^ ]+//g' \
     -e 's/(^| )console=tty[0-9]+//g' \
-    -e 's/(^| )video=HDMI-A-1:[^ ]+//g' \
-    -e 's/(^| )video=HDMI-A-2:[^ ]+//g' \
     -e 's/(^| )drm\.edid_firmware=HDMI-A-1:[^ ]+//g' \
     -e 's/(^| )drm\.edid_firmware=HDMI-A-2:[^ ]+//g' \
     -e 's/(^| )vc4\.force_hotplug=[^ ]+//g' \
     -e 's/(^| )fsck\.repair=[^ ]+//g' \
 )"
 
+# Remove existing video= tokens only when replacement video entries were specified.
+if [ "${#video[@]}" -gt 0 ]; then
+  cmdline="$(echo "$cmdline" | sed -E 's/(^| )video=[^ ]+( |$)/ /g')"
+fi
+
 # Normalize whitespace
 cmdline="$(echo "$cmdline" | tr -s ' ' | sed -E 's/^ +| +$//g')"
 
 # Append our desired tokens exactly once
 cmdline="$cmdline vt.global_cursor_default=0 fsck.repair=yes logo.nologo systemd.getty_auto=no"
+if [ "${#video[@]}" -gt 0 ]; then
+  for video_entry in "${video[@]}"; do
+    cmdline="$cmdline video=$video_entry"
+  done
+fi
 if [ "$edid" != "none" ]; then
   if [ "$displays" -eq 2 ]; then
     cmdline="$cmdline \
-video=HDMI-A-1:1920x1080@60D video=HDMI-A-2:1920x1080@60D \
 drm.edid_firmware=HDMI-A-1:${edid}.edid drm.edid_firmware=HDMI-A-2:${edid}.edid \
 vc4.force_hotplug=0x03"
   else
     cmdline="$cmdline \
-video=HDMI-A-1:1920x1080@60D \
 drm.edid_firmware=HDMI-A-1:${edid}.edid \
 vc4.force_hotplug=0x01"
   fi
 fi
+
+# Normalize whitespace again after appending multiline blocks.
+cmdline="$(echo "$cmdline" | tr -s ' ' | sed -E 's/^ +| +$//g')"
 
 # write the updated cmdline back to the file
 step_begin "Writing boot cmdline configuration"

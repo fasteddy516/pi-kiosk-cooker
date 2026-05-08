@@ -33,6 +33,8 @@ chmod +x kiosk_cooker.sh
 
 `--displays=<1|2>` sets the number of HDMI displays to configure.  Defaults to `1`.
 
+`--video=<value>` adds a `video=<value>` token to `/boot/firmware/cmdline.txt`.  This argument may be specified multiple times.  Values are passed through without parsing or validation, so use the exact kernel video argument value you want, for example `--video=HDMI-A-1:1280x800@60D`.  When at least one `--video` argument is specified, all existing `video=` tokens are removed from `cmdline.txt` before the specified ones are added; when no `--video` argument is specified, existing `video=` tokens are left untouched.
+
 `--edid=<name>` sets the EDID profile to use for the display(s).  Defaults to `none` (skip EDID configuration).
 
 > [!NOTE]
@@ -85,7 +87,7 @@ The script sets `DEBIAN_FRONTEND=noninteractive` for the duration of its executi
 | `rpi-connect` _(optional)_ | Full Raspberry Pi Connect package (not lite), required for screen sharing support. Installed by default; skipped when `--no-rpi-connect` is passed. |
 
 ### Boot configuration (`/boot/firmware/cmdline.txt`)
-The kernel command line is modified idempotently — existing tokens managed by this script are removed before the desired set is appended, so re-running the script never duplicates entries. As part of this cleanup, any existing `quiet` and `console=tty<n>` tokens are removed.
+The kernel command line is modified idempotently — existing tokens managed by this script are removed before the desired set is appended, so re-running the script never duplicates entries. As part of this cleanup, any existing `quiet` and `console=tty<n>` tokens are removed. Existing `video=` tokens are only removed when one or more `--video` arguments are specified; otherwise they are preserved.
 
 | Token | Purpose |
 |---|---|
@@ -93,8 +95,7 @@ The kernel command line is modified idempotently — existing tokens managed by 
 | `fsck.repair=yes` | Automatically repairs filesystem errors on boot instead of dropping to a recovery prompt, keeping the kiosk unattended-safe. |
 | `logo.nologo` | Suppresses Linux kernel framebuffer logos during early boot (including Raspberry Pi kernel logos), reducing boot-time branding artifacts on-screen. |
 | `systemd.getty_auto=no` | Disables systemd's automatic getty generation from the kernel command line, reducing chances of VT login prompts briefly reappearing during shutdown/reboot transitions. |
-| `video=HDMI-A-1:1920x1080@60D` _(optional)_ | Forces the first HDMI output to 1920×1080 @ 60 Hz at the kernel/DRM level before any display manager is involved. Only added when an EDID profile is in use. |
-| `video=HDMI-A-2:1920x1080@60D` _(optional)_ | Same as above for the second HDMI output. Only added when an EDID profile is in use and `--displays=2`. |
+| `video=<value>` _(optional, repeatable)_ | Adds caller-supplied kernel/DRM video settings before any display manager is involved. Added only when one or more `--video=<value>` arguments are specified. Values are not parsed or validated by this script. |
 | `drm.edid_firmware=HDMI-A-1:<name>.edid` _(optional)_ | Overrides the EDID reported by the display on HDMI-1 with a firmware-supplied file. This is necessary when a connected display doesn't expose a valid EDID (e.g. a long HDMI run, a splitter, or a capture card), which would otherwise cause the output to be disabled or configured incorrectly. |
 | `drm.edid_firmware=HDMI-A-2:<name>.edid` _(optional)_ | Same as above for HDMI-2. |
 | `vc4.force_hotplug=0x01` / `0x03` _(optional)_ | Forces the VC4 GPU driver to treat the specified HDMI output(s) as always-connected, even when no display is detected. Without this, outputs with overridden EDID may still be disabled if the HPD (hot-plug detect) pin reads as disconnected. `0x01` enables it for HDMI-1; `0x03` for both. |
