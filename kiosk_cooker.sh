@@ -1287,8 +1287,8 @@ step_begin "Writing kiosk.service"
 if cat << EOF > /etc/systemd/system/kiosk.service; then
 [Unit]
 Description=Kiosk graphical session on tty1
-After=systemd-user-sessions.service systemd-logind.service
-Wants=systemd-user-sessions.service
+After=systemd-user-sessions.service systemd-logind.service seatd.service
+Wants=systemd-user-sessions.service seatd.service
 
 [Service]
 Type=simple
