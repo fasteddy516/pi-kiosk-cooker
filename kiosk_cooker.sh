@@ -416,7 +416,17 @@ cmdline="$(echo "$cmdline" \
 
 # Remove existing video= tokens only when replacement video entries were specified.
 if [ "${#video[@]}" -gt 0 ]; then
-  cmdline="$(echo "$cmdline" | sed -E 's/(^| )video=[^ ]+( |$)/ /g')"
+  filtered_cmdline=""
+  for cmdline_token in $cmdline; do
+    case "$cmdline_token" in
+      video=*)
+        ;;
+      *)
+        filtered_cmdline="${filtered_cmdline:+$filtered_cmdline }$cmdline_token"
+        ;;
+    esac
+  done
+  cmdline="$filtered_cmdline"
 fi
 
 # Normalize whitespace
