@@ -178,14 +178,20 @@ run_user_systemctl() {
   local text="$1"
   shift
 
-  run_step "$text" su "$app_user" -c "XDG_RUNTIME_DIR=/run/user/$app_uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$app_uid/bus systemctl --user $*"
+  run_step "$text" runuser -u "$app_user" -- env \
+    "XDG_RUNTIME_DIR=/run/user/$app_uid" \
+    "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$app_uid/bus" \
+    systemctl --user "$@"
 }
 
 run_user_systemctl_allow_nonzero() {
   local text="$1"
   shift
 
-  run_step_allow_nonzero "$text" su "$app_user" -c "XDG_RUNTIME_DIR=/run/user/$app_uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$app_uid/bus systemctl --user $*"
+  run_step_allow_nonzero "$text" runuser -u "$app_user" -- env \
+    "XDG_RUNTIME_DIR=/run/user/$app_uid" \
+    "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$app_uid/bus" \
+    systemctl --user "$@"
 }
 
 print_line "${C_RED}🔥${C_RESET}${C_LIGHT_BLUE} pi-kiosk-cooker ${SCRIPT_VERSION} by fasteddy516${C_RESET}"
