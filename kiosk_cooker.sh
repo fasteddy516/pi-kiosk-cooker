@@ -745,6 +745,23 @@ pick_outputs() {
   echo "\$outs"
 }
 
+current_output_width() {
+  local output="\$1"
+  wayland_query | awk -v output="\$output" '
+    \$1 == output { in_output=1; next }
+    /^[^[:space:]]/ { in_output=0 }
+    in_output && /current/ {
+      for (i = 1; i <= NF; i++) {
+        if (\$i ~ /^[0-9]+x[0-9]+\$/) {
+          split(\$i, dims, "x")
+          print dims[1]
+          exit
+        }
+      }
+    }
+  '
+}
+
 start_kiosk_target() {
   log "Layout applied successfully."
   export WAYLAND_DISPLAY="\$TARGET_WAYLAND_DISPLAY"
@@ -805,10 +822,14 @@ init_kiosk_after_wayland_ready() {
       fi
     else
       if [ "\$NUM_DISPLAYS" -eq 2 ]; then
-        if wlr-randr --output "\$out1" --on --pos 0,0 \
-          && wlr-randr --output "\$out2" --on; then
-          start_kiosk_target
-          return \$?
+        if wlr-randr --output "\$out1" --on --pos 0,0; then
+          out1_width="\$(current_output_width "\$out1")"
+          if [ -z "\$out1_width" ]; then
+            log "Could not determine current width for \$out1 after enabling it."
+          elif wlr-randr --output "\$out2" --on --pos "\${out1_width},0"; then
+            start_kiosk_target
+            return \$?
+          fi
         fi
       else
         if wlr-randr --output "\$out1" --on --pos 0,0; then
