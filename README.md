@@ -5,7 +5,7 @@ _Tested on Raspberry Pi 5 hardware running Raspberry Pi OS Lite (64-bit) "Trixie
 
 Written by [Edward Wright](mailto:fasteddy@thewrightspace.net) (fasteddy516).
 
-Available at https://github.com/fasteddy516/SimplySerial
+Available at https://github.com/fasteddy516/pi-kiosk-cooker
 
 
 ## Description
