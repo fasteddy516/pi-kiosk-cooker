@@ -478,8 +478,12 @@ fi
 
 # create default application user if necessary
 step_begin "Ensuring user '$app_user' exists"
-if grep "^$app_user:" /etc/passwd > /dev/null 2>&1; then
+if getent passwd "$app_user" > /dev/null 2>&1; then
+  if ! getent group "$app_user" > /dev/null 2>&1; then
+    step_error "User '$app_user' already exists, but matching group '$app_user' does not exist"
+  fi
   step_ok
+  print_line "    ${C_YELLOW}! warning: user '$app_user' already exists; password will not be changed${C_RESET}"
 else
   if run_quiet useradd -s /bin/bash -p "$(openssl passwd -6 "$app_password")" "$app_user" --create-home; then
     step_ok
