@@ -1307,6 +1307,7 @@ StandardError=journal
 PAMName=login
 
 ExecStart=/home/$app_user/.local/bin/kiosk
+ExecStopPost=/bin/sh -c 'XDG_RUNTIME_DIR=/run/user/$app_uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$app_uid/bus systemctl --user stop kiosk.target || true'
 Restart=on-failure
 RestartSec=2
 
