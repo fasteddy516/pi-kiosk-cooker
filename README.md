@@ -73,6 +73,7 @@ The script sets `DEBIAN_FRONTEND=noninteractive` for the duration of its executi
 |---|---|
 | `labwc` | A lightweight Wayland compositor (window manager) used as the kiosk session. |
 | `wlr-randr` | Command-line tool to query and configure Wayland outputs (used by `kiosk-ui-init`). |
+| `wlopm` | Command-line tool to control Wayland output power management, useful for display blanking/power-state control. |
 | `wayland-protocols` | Wayland extension protocols required by labwc and Wayland clients. |
 | `xwayland` | Compatibility layer so X11 applications can run inside the Wayland session. |
 | `dbus-user-session` | Provides a per-user D-Bus session bus, required by Wayland and labwc. |

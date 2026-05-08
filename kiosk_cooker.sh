@@ -335,7 +335,7 @@ else
   step_ok
 fi
 
-kiosk_packages="labwc wlr-randr wayland-protocols xwayland dbus-user-session seatd $browser_package"
+kiosk_packages="labwc wlr-randr wlopm wayland-protocols xwayland dbus-user-session seatd $browser_package"
 if [ -n "$touch_keyboard_package" ]; then
   kiosk_packages="$kiosk_packages $touch_keyboard_package"
 fi
