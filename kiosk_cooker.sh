@@ -786,10 +786,12 @@ start_kiosk_target() {
   log "Layout applied successfully."
   export WAYLAND_DISPLAY="\$TARGET_WAYLAND_DISPLAY"
   systemctl --user import-environment WAYLAND_DISPLAY XDG_RUNTIME_DIR XDG_SESSION_TYPE XDG_CURRENT_DESKTOP GTK_THEME || true
-  if systemctl --user restart kiosk.target; then
-    log "Restarted kiosk.target."
+  systemctl --user stop kiosk.target || true
+  sleep 1
+  if systemctl --user start kiosk.target; then
+    log "Started kiosk.target."
   else
-    log "Failed to restart kiosk.target."
+    log "Failed to start kiosk.target."
     return 1
   fi
 }
@@ -883,6 +885,9 @@ cleanup_children() {
   [ -n "\$labwc_pid" ] && kill "\$labwc_pid" 2>/dev/null || true
   [ -n "\$init_pid" ] && wait "\$init_pid" 2>/dev/null || true
   [ -n "\$labwc_pid" ] && wait "\$labwc_pid" 2>/dev/null || true
+  pkill -TERM -x labwc 2>/dev/null || true
+  sleep 0.5
+  pkill -KILL -x labwc 2>/dev/null || true
   rm -rf "\$status_dir"
 }
 
@@ -1414,9 +1419,11 @@ StandardError=journal
 PAMName=login
 
 ExecStart=/home/$app_user/.local/bin/kiosk
-ExecStopPost=/bin/sh -c 'XDG_RUNTIME_DIR=/run/user/$app_uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$app_uid/bus systemctl --user stop kiosk.target || true'
+ExecStopPost=/bin/sh -c 'XDG_RUNTIME_DIR=/run/user/$app_uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$app_uid/bus systemctl --user stop kiosk.target || true; pkill -TERM -u $app_user -x labwc || true; sleep 1; pkill -KILL -u $app_user -x labwc || true'
 Restart=on-failure
 RestartSec=2
+KillMode=control-group
+TimeoutStopSec=5
 
 [Install]
 WantedBy=multi-user.target
