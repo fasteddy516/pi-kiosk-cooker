@@ -591,7 +591,7 @@ else
 fi
 run_step "Creating labwc config directory" su "$app_user" -c "mkdir -p ~/.config/labwc"
 step_begin "Writing labwc rc.xml"
-cat << 'EOF' > /home/$app_user/.config/labwc/rc.xml
+if cat << 'EOF' > /home/$app_user/.config/labwc/rc.xml; then
 <?xml version="1.0"?>
 <labwc_config>
   <core>
@@ -651,25 +651,34 @@ cat << 'EOF' > /home/$app_user/.config/labwc/rc.xml
   </windowRules>
 </labwc_config>
 EOF
-step_ok
+  step_ok
+else
+  step_error "Unable to write /home/$app_user/.config/labwc/rc.xml"
+fi
 # Create a zero-size labwc theme so even if SSD is applied it renders invisibly
 run_step "Setting ownership for labwc config" chown "$app_user:$app_user" "/home/$app_user/.config/labwc/rc.xml"
 run_step "Creating kiosk theme directory" su "$app_user" -c "mkdir -p ~/.local/share/themes/kiosk/openbox-3"
 step_begin "Writing kiosk theme configuration"
-cat << 'EOF' > /home/$app_user/.local/share/themes/kiosk/openbox-3/themerc
+if cat << 'EOF' > /home/$app_user/.local/share/themes/kiosk/openbox-3/themerc; then
 border.width: 0
 padding.width: 0
 padding.height: 0
 titlebar.height: 0
 EOF
-step_ok
+  step_ok
+else
+  step_error "Unable to write /home/$app_user/.local/share/themes/kiosk/openbox-3/themerc"
+fi
 run_step "Setting ownership for kiosk theme files" chown -R "$app_user:$app_user" "/home/$app_user/.local/share/themes"
 step_begin "Writing labwc autostart script"
-cat << EOF > /home/$app_user/.config/labwc/autostart
+if cat << EOF > /home/$app_user/.config/labwc/autostart; then
 #!/bin/sh
 $labwc_connect_autostart
 EOF
-step_ok
+  step_ok
+else
+  step_error "Unable to write /home/$app_user/.config/labwc/autostart"
+fi
 run_step "Setting labwc autostart ownership" chown "$app_user:$app_user" "/home/$app_user/.config/labwc/autostart"
 run_step "Making labwc autostart executable" chmod +x "/home/$app_user/.config/labwc/autostart"
 
@@ -683,7 +692,7 @@ fi
 kiosk_num_displays=$displays
 
 step_begin "Writing kiosk session launcher"
-cat << EOF > /home/$app_user/.local/bin/kiosk
+if cat << EOF > /home/$app_user/.local/bin/kiosk; then
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -821,7 +830,10 @@ fi
 init_kiosk_after_wayland_ready &
 exec dbus-run-session -- labwc
 EOF
-step_ok
+  step_ok
+else
+  step_error "Unable to write /home/$app_user/.local/bin/kiosk"
+fi
 run_step "Setting session launcher ownership" chown "$app_user:$app_user" "/home/$app_user/.local/bin/kiosk"
 run_step "Making session launcher executable" chmod +x "/home/$app_user/.local/bin/kiosk"
 
@@ -832,7 +844,7 @@ create_kioskbrowser_index() {
   local settings_dir="~/applications/kioskbrowser-${browser_num}/settings"
   local tint="$2"
 
-  cat << EOF > /home/$app_user/applications/kioskbrowser-${browser_num}/index.html
+  cat << EOF > /home/$app_user/applications/kioskbrowser-${browser_num}/index.html || return 1
 <!doctype html>
 <html lang="en">
 <head>
@@ -1193,14 +1205,14 @@ create_kioskbrowser_index() {
 </html>
 EOF
 
-  chown $app_user:$app_user /home/$app_user/applications/kioskbrowser-${browser_num}/index.html
+  chown "$app_user:$app_user" "/home/$app_user/applications/kioskbrowser-${browser_num}/index.html"
 }
 
 create_kioskbrowser_launcher() {
   local browser_num="$1"
   local output_name="$2"
 
-  cat << EOF > /home/$app_user/applications/kioskbrowser-${browser_num}/start.sh
+  cat << EOF > /home/$app_user/applications/kioskbrowser-${browser_num}/start.sh || return 1
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -1260,8 +1272,8 @@ exec "\$BROWSER_BIN" \
   --profile-directory="\$OUTPUT_NAME"
 EOF
 
-  chown $app_user:$app_user /home/$app_user/applications/kioskbrowser-${browser_num}/start.sh
-  chmod +x /home/$app_user/applications/kioskbrowser-${browser_num}/start.sh
+  chown "$app_user:$app_user" "/home/$app_user/applications/kioskbrowser-${browser_num}/start.sh"
+  chmod +x "/home/$app_user/applications/kioskbrowser-${browser_num}/start.sh"
 }
 
 run_step "Generating browser 1 local start page" create_kioskbrowser_index 1 250
@@ -1272,7 +1284,7 @@ run_step "Generating browser 2 launcher" create_kioskbrowser_launcher 2 "HDMI-A-
 
 # add kiosk.service to start the graphical session on tty1 at boot
 step_begin "Writing kiosk.service"
-cat << EOF > /etc/systemd/system/kiosk.service
+if cat << EOF > /etc/systemd/system/kiosk.service; then
 [Unit]
 Description=Kiosk graphical session on tty1
 After=systemd-user-sessions.service systemd-logind.service
@@ -1301,12 +1313,15 @@ RestartSec=2
 [Install]
 WantedBy=multi-user.target
 EOF
-step_ok
+  step_ok
+else
+  step_error "Unable to write /etc/systemd/system/kiosk.service"
+fi
 
 # create systemd service for the on-screen touch keyboard (if applicable)
 if [ -n "$touch_keyboard_package" ]; then
   step_begin "Writing touchkeyboard.service"
-  cat << EOF > /home/$app_user/.config/systemd/user/touchkeyboard.service
+  if cat << EOF > /home/$app_user/.config/systemd/user/touchkeyboard.service; then
 [Unit]
 Description=Kiosk on-screen touch keyboard
 PartOf=kiosk.target
@@ -1322,12 +1337,15 @@ RestartSec=2
 [Install]
 WantedBy=kiosk.target
 EOF
-  step_ok
+    step_ok
+  else
+    step_error "Unable to write /home/$app_user/.config/systemd/user/touchkeyboard.service"
+  fi
 fi
 
 create_kioskbrowser_service() {
   local browser_num="$1"
-  cat << EOF > /home/$app_user/.config/systemd/user/kioskbrowser-${browser_num}.service
+  cat << EOF > /home/$app_user/.config/systemd/user/kioskbrowser-${browser_num}.service || return 1
 [Unit]
 Description=Kiosk browser on display $browser_num
 PartOf=kiosk.target
@@ -1346,12 +1364,15 @@ EOF
 
 # create kiosk user target and browser services for display 1 and display 2
 step_begin "Writing kiosk.target user unit"
-cat << EOF > /home/$app_user/.config/systemd/user/kiosk.target
+if cat << EOF > /home/$app_user/.config/systemd/user/kiosk.target; then
 [Unit]
 Description=Kiosk User Services
 StopWhenUnneeded=no
 EOF
-step_ok
+  step_ok
+else
+  step_error "Unable to write /home/$app_user/.config/systemd/user/kiosk.target"
+fi
 run_step "Setting kiosk user systemd unit ownership" chown -R "$app_user:$app_user" "/home/$app_user/.config/systemd"
 
 # create browser services for display 1 and display 2
