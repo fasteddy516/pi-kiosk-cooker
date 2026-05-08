@@ -42,6 +42,8 @@ chmod +x kiosk_cooker.sh
 
 `--no-rpi-connect` skips installation of Raspberry Pi Connect (`rpi-connect`).  Connect is installed and its user services enabled globally by default.
 
+`--no-default-application` disables the generated default Chromium kiosk browser services (`kiosk_browser_1.service` and `kiosk_browser_2.service`).  When omitted, the default browser application services are enabled according to the configured display count.
+
 `--no-reboot` disables the automatic reboot at the end of the script.
 
 `--remember` saves all other arguments provided on this run to a `kiosk_cooker.memory` file next to the script.  On subsequent runs, those saved arguments are automatically prepended to the command line so you don't have to repeat them.  Explicitly provided arguments always override saved ones.  Delete `kiosk_cooker.memory` to clear the saved arguments.

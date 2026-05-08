@@ -215,6 +215,11 @@ if [ ! -v rpi_connect ]; then
   rpi_connect=1
 fi
 
+# set default application service state if it hasn't been specified
+if [ ! -v default_application ]; then
+  default_application=1
+fi
+
 # set default reboot state if necessary
 if [ ! -v reboot ]; then
   reboot=1
@@ -259,6 +264,9 @@ for arg in "$@"; do
       ;;
     --no-rpi-connect)
       rpi_connect=0
+      ;;
+    --no-default-application)
+      default_application=0
       ;;
     --no-reboot)
       reboot=0
@@ -1411,15 +1419,24 @@ else
     step_error_continue "kiosk-touch-keyboard.service was not present or could not be disabled"
   fi
 fi
-run_step "Enabling kiosk_browser_1.service" systemctl enable kiosk_browser_1.service
-if [ "$displays" -eq 2 ]; then
-  run_step "Enabling kiosk_browser_2.service" systemctl enable kiosk_browser_2.service
+if [ "$default_application" -eq 1 ]; then
+  run_step "Enabling kiosk_browser_1.service" systemctl enable kiosk_browser_1.service
+  if [ "$displays" -eq 2 ]; then
+    run_step "Enabling kiosk_browser_2.service" systemctl enable kiosk_browser_2.service
+  else
+    step_begin "Disabling kiosk_browser_2.service"
+    if run_quiet systemctl disable --now kiosk_browser_2.service; then
+      step_ok
+    else
+      step_error_continue "kiosk_browser_2.service was not present or could not be disabled"
+    fi
+  fi
 else
-  step_begin "Disabling kiosk_browser_2.service"
-  if run_quiet systemctl disable --now kiosk_browser_2.service; then
+  step_begin "Disabling default kiosk browser services"
+  if run_quiet systemctl disable --now kiosk_browser_1.service kiosk_browser_2.service; then
     step_ok
   else
-    step_error_continue "kiosk_browser_2.service was not present or could not be disabled"
+    step_error_continue "One or more kiosk browser services were not present or could not be disabled"
   fi
 fi
 
