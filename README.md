@@ -44,7 +44,7 @@ chmod +x kiosk_cooker.sh
 
 `--no-rpi-connect` skips installation of Raspberry Pi Connect (`rpi-connect`).  Connect is installed and its user services enabled globally by default.
 
-`--no-default-application` disables the generated default Chromium kiosk browser services (`kiosk_browser_1.service` and `kiosk_browser_2.service`).  When omitted, the default browser application services are enabled according to the configured display count.
+`--no-default-application` disables the generated default Chromium kiosk browser user services (`kiosk_browser_1.service` and `kiosk_browser_2.service`).  When omitted, the default browser application services are enabled according to the configured display count.
 
 `--no-reboot` disables the automatic reboot at the end of the script.
 
@@ -115,7 +115,7 @@ A dedicated user account (default: `kiosk`) is created for running the kiosk ses
 `loginctl enable-linger` is called for this user so that user-level systemd services (including D-Bus) start at boot without requiring an interactive login session.
 
 ### Wayland session setup
-The kiosk session is built around three layered systemd services:
+The kiosk session is built around three layered system-level systemd services plus a user-level `kiosk.target` for the default browser application services:
 
 **`kiosk-session.service`** starts the Wayland compositor (`labwc`) directly on tty1, running as the kiosk user. By running `labwc` through `session_start.sh` (which wraps it in `dbus-run-session`), the compositor gets its own D-Bus session bus and the correct Wayland/XDG environment variables. Getty on tty1 is fully disabled (`disable --now`) and masked so a console login prompt does not return and cannot conflict with the compositor claiming that terminal. To harden this further, the script also sets `NAutoVTs=0` and `ReserveVT=0` in `/etc/systemd/logind.conf` to stop automatic virtual-console getty spawning.
 
@@ -123,11 +123,13 @@ At compositor startup, labwc is configured to run the `HideCursor` action on fir
 
 **`kiosk-session-ready.service`** runs `wait-for-gui-ready`, a script that polls for the Wayland socket (`$XDG_RUNTIME_DIR/wayland-0`) and then confirms the compositor is responsive via `wlr-randr`. This gate prevents dependent services from trying to interact with the compositor before it is actually ready.
 
-**`kiosk-ui-init.service`** runs `kiosk-ui-init` after the session is confirmed ready. This script uses `wlr-randr` to enumerate connected HDMI outputs and apply the desired display layout — enabling the correct outputs, setting resolution and position. When an EDID profile is in use the resolution is forced explicitly; otherwise the compositor's negotiated mode is accepted. Applying layout from a separate script (rather than a labwc config file) gives fine-grained control and retries, which is important on hardware where outputs may not be immediately enumerable right as the compositor starts.
+**`kiosk-ui-init.service`** runs `kiosk-ui-init` after the session is confirmed ready. This script uses `wlr-randr` to enumerate connected HDMI outputs and apply the desired display layout — enabling the correct outputs, setting resolution and position. When an EDID profile is in use the resolution is forced explicitly; otherwise the compositor's negotiated mode is accepted. Applying layout from a separate script (rather than a labwc config file) gives fine-grained control and retries, which is important on hardware where outputs may not be immediately enumerable right as the compositor starts. Once layout is applied successfully, it starts the kiosk user's `kiosk.target`, which in turn starts the enabled browser user services.
+
+**`kiosk.target`** is installed in `/home/<app_user>/.config/systemd/user/kiosk.target` and acts as the user-level grouping point for kiosk application services. It is started by `kiosk-ui-init` after the display layout is ready.
 
 **`labwc/autostart`** is a shell script that labwc executes at session start. When Raspberry Pi Connect is enabled, it imports the Wayland session environment into systemd and D-Bus so that `rpi-connect-wayvnc.service` can reach the compositor for screen sharing.
 
-**`kiosk-touch-keyboard.service`** is an optional systemd service (created when `squeekboard` is available and `--no-touch-keyboard` is not used). It starts `squeekboard` after `kiosk-ui-init.service`, runs as the kiosk application user with the same Wayland environment as the browser services, and can be toggled independently:
+**`kiosk-touch-keyboard.service`** is an optional system-level systemd service (created when `squeekboard` is available and `--no-touch-keyboard` is not used). It starts `squeekboard` after `kiosk-ui-init.service`, runs as the kiosk application user with the same Wayland environment as the browser services, and can be toggled independently:
 
 - Disable now and on boot: `sudo systemctl disable --now kiosk-touch-keyboard.service`
 - Enable now and on boot: `sudo systemctl enable --now kiosk-touch-keyboard.service`
@@ -137,7 +139,7 @@ At compositor startup, labwc is configured to run the `HideCursor` action on fir
 **`session_start.sh`** also exports Wayland IM variables (`GTK_IM_MODULE`, `QT_IM_MODULE`, `SDL_IM_MODULE`, `XMODIFIERS`) to improve on-screen keyboard activation across toolkits.
 
 ### Browser kiosk service (`kiosk_browser_1.service`)
-After the graphical session and display layout are ready, `kiosk_browser_1.service` starts a fullscreen Chromium kiosk instance for display 1 and is configured with `Restart=always` so it automatically respawns if it exits or crashes.
+After the graphical session and display layout are ready, `kiosk_browser_1.service` starts a fullscreen Chromium kiosk instance for display 1 and is configured with `Restart=always` so it automatically respawns if it exits or crashes. This is a user-level systemd service installed at `/home/<app_user>/.config/systemd/user/kiosk_browser_1.service` and enabled under `kiosk.target`.
 
 The service runs `/home/<app_user>/kiosk/kiosk_browser_1/launch_kiosk_browser_1.sh`, which launches Chromium in app mode (`--app`, `--start-maximized`) with startup prompts and browser chrome disabled. App+maximized mode is used instead of `--kiosk`/`--start-fullscreen` because Chromium's true kiosk mode uses exclusive Wayland fullscreen, which prevents compositor layer-shell surfaces (such as `squeekboard`) from rendering above the browser window — meaning the on-screen keyboard would always appear behind it. App mode with `--start-maximized` fills the display without claiming exclusive fullscreen, allowing the OSK to overlay the browser correctly. At launch time, the script queries Wayland output geometry (`wlr-randr`) for both output position and current mode so the window origin and size match `HDMI-A-1` reliably. The launcher enables Wayland IME support (`--enable-wayland-ime`), enables Chromium virtual keyboard and CSD features (`--enable-features=...,VirtualKeyboard,WaylandWindowDecorations`, `--enable-virtual-keyboard`), and forces touch input mode (`--touch-events=enabled`). `WaylandWindowDecorations` is critical: it causes Chromium to negotiate client-side decorations with labwc via the `xdg-decoration` protocol, and when maximized Chromium suppresses its own title bar — keeping the window borderless without relying on compositor-level window rules.
 
@@ -154,7 +156,7 @@ The script also creates a parallel display 2 browser setup:
 
 - `/home/<app_user>/kiosk/kiosk_browser_2/index.html`
 - `/home/<app_user>/kiosk/kiosk_browser_2/launch_kiosk_browser_2.sh`
-- `/etc/systemd/system/kiosk_browser_2.service`
+- `/home/<app_user>/.config/systemd/user/kiosk_browser_2.service`
 
 When the script runs with `--displays=2`, `kiosk_browser_2.service` is enabled automatically. For single-display installs (`--displays=1`), it is left disabled. Display 2 now uses the same startup page behavior as display 1, including the in-page URL field and **Set start page** flow that writes to `/home/<app_user>/kiosk/kiosk_browser_2/settings/startup_url.txt`. The display 2 launcher targets `HDMI-A-2` when present.
 

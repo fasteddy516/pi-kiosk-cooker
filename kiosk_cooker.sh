@@ -174,6 +174,13 @@ run_step_allow_nonzero() {
   fi
 }
 
+run_user_systemctl() {
+  local text="$1"
+  shift
+
+  run_step "$text" su "$app_user" -c "XDG_RUNTIME_DIR=/run/user/$app_uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$app_uid/bus systemctl --user $*"
+}
+
 print_line "${C_RED}🔥${C_RESET}${C_LIGHT_BLUE} pi-kiosk-cooker ${SCRIPT_VERSION} by fasteddy516${C_RESET}"
 
 # ensure the script is being run as root
@@ -521,21 +528,20 @@ else
 fi
 
 # create compositor/session startup files
-run_step "Creating kiosk config directories" su "$app_user" -c "mkdir -p ~/.config ~/kiosk"
+run_step "Creating kiosk config directories" su "$app_user" -c "mkdir -p ~/.config/labwc ~/.config/systemd/user ~/kiosk"
 step_begin "Enabling linger for '$app_user'"
 if run_quiet loginctl enable-linger "$app_user"; then
   step_ok
 else
   step_error_continue "Could not enable linger for '$app_user'"
 fi
-if [ $rpi_connect -eq 1 ]; then
-  # Ensure a user manager exists now so user services can be started before first login.
-  step_begin "Starting user manager for '$app_user'"
-  if run_quiet systemctl start "user@$app_uid.service"; then
-    step_ok
-  else
-    step_error_continue "Could not start user@$app_uid.service right now"
-  fi
+
+# Ensure a user manager exists now so user services can be managed before first login.
+step_begin "Starting user manager for '$app_user'"
+if run_quiet systemctl start "user@$app_uid.service"; then
+  step_ok
+else
+  step_error_continue "Could not start user@$app_uid.service right now"
 fi
 
 # set system-wide dark mode preference for GTK apps (including squeekboard)
@@ -1208,6 +1214,12 @@ pick_outputs() {
   echo "\$outs"
 }
 
+start_kiosk_target() {
+  log "Layout applied successfully."
+  systemctl --user start kiosk.target
+  exit 0
+}
+
 main() {
   log "Waiting for Wayland socket..."
   if ! wait_for_socket "\$XDG_RUNTIME_DIR/\$WAYLAND_DISPLAY" "\$WAIT_SECS"; then
@@ -1245,26 +1257,22 @@ main() {
       if [ "\$NUM_DISPLAYS" -eq 2 ]; then
         if wlr-randr --output "\$out1" --on --mode "\$MODE" --pos 0,0 \
           && wlr-randr --output "\$out2" --on --mode "\$MODE" --pos 1920,0; then
-          log "Layout applied successfully."
-          exit 0
+          start_kiosk_target
         fi
       else
         if wlr-randr --output "\$out1" --on --mode "\$MODE" --pos 0,0; then
-          log "Layout applied successfully."
-          exit 0
+          start_kiosk_target
         fi
       fi
     else
       if [ "\$NUM_DISPLAYS" -eq 2 ]; then
         if wlr-randr --output "\$out1" --on --pos 0,0 \
           && wlr-randr --output "\$out2" --on; then
-          log "Layout applied successfully."
-          exit 0
+          start_kiosk_target
         fi
       else
         if wlr-randr --output "\$out1" --on --pos 0,0; then
-          log "Layout applied successfully."
-          exit 0
+          start_kiosk_target
         fi
       fi
     fi
@@ -1405,34 +1413,41 @@ step_ok
 
 create_kiosk_browser_service() {
   local browser_num="$1"
-  cat << EOF > /etc/systemd/system/kiosk_browser_${browser_num}.service
+  cat << EOF > /home/$app_user/.config/systemd/user/kiosk_browser_${browser_num}.service
 [Unit]
 Description=Kiosk browser on display $browser_num
-Requires=kiosk-ui-init.service
-After=kiosk-ui-init.service
+PartOf=kiosk.target
+After=kiosk.target
 
 [Service]
 Type=simple
-User=$app_user
-Group=$app_user
-WorkingDirectory=/home/$app_user
-Environment=HOME=/home/$app_user
-$wayland_client_env
 ExecStart=/home/$app_user/kiosk/kiosk_browser_${browser_num}/launch_kiosk_browser_${browser_num}.sh
 Restart=always
 RestartSec=2
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=kiosk.target
 EOF
 }
+
+# create kiosk user target and browser services for display 1 and display 2
+step_begin "Writing kiosk.target user unit"
+cat << EOF > /home/$app_user/.config/systemd/user/kiosk.target
+[Unit]
+Description=Kiosk User Services
+StopWhenUnneeded=no
+EOF
+step_ok
+run_step "Setting kiosk user systemd unit ownership" chown -R "$app_user:$app_user" "/home/$app_user/.config/systemd"
 
 # create browser services for display 1 and display 2
 run_step "Writing kiosk_browser_1.service" create_kiosk_browser_service 1
 run_step "Writing kiosk_browser_2.service" create_kiosk_browser_service 2
+run_step "Setting kiosk browser user service ownership" chown "$app_user:$app_user" "/home/$app_user/.config/systemd/user/kiosk_browser_1.service" "/home/$app_user/.config/systemd/user/kiosk_browser_2.service"
 
 # finish setting up systemd services and targets
 run_step "Reloading systemd daemon" systemctl daemon-reload
+run_user_systemctl "Reloading kiosk user systemd daemon" daemon-reload
 run_step "Enabling kiosk-session.service" systemctl enable kiosk-session.service
 run_step "Enabling kiosk-session-ready.service" systemctl enable kiosk-session-ready.service
 run_step "Enabling kiosk-ui-init.service" systemctl enable kiosk-ui-init.service
@@ -1447,24 +1462,14 @@ else
   fi
 fi
 if [ "$default_application" -eq 1 ]; then
-  run_step "Enabling kiosk_browser_1.service" systemctl enable kiosk_browser_1.service
+  run_user_systemctl "Enabling kiosk_browser_1.service for '$app_user'" enable kiosk_browser_1.service
   if [ "$displays" -eq 2 ]; then
-    run_step "Enabling kiosk_browser_2.service" systemctl enable kiosk_browser_2.service
+    run_user_systemctl "Enabling kiosk_browser_2.service for '$app_user'" enable kiosk_browser_2.service
   else
-    step_begin "Disabling kiosk_browser_2.service"
-    if run_quiet systemctl disable --now kiosk_browser_2.service; then
-      step_ok
-    else
-      step_error_continue "kiosk_browser_2.service was not present or could not be disabled"
-    fi
+    run_user_systemctl "Disabling kiosk_browser_2.service for '$app_user'" disable --now kiosk_browser_2.service
   fi
 else
-  step_begin "Disabling default kiosk browser services"
-  if run_quiet systemctl disable --now kiosk_browser_1.service kiosk_browser_2.service; then
-    step_ok
-  else
-    step_error_continue "One or more kiosk browser services were not present or could not be disabled"
-  fi
+  run_user_systemctl "Disabling default kiosk browser services for '$app_user'" disable --now kiosk_browser_1.service kiosk_browser_2.service
 fi
 
 # remind about rpi-connect signin if applicable
