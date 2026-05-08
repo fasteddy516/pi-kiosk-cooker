@@ -535,7 +535,7 @@ else
 fi
 
 # create compositor/session startup files
-run_step "Creating kiosk config directories" su "$app_user" -c "mkdir -p ~/.config/labwc ~/.config/systemd/user ~/kiosk"
+run_step "Creating kiosk config directories" su "$app_user" -c "mkdir -p ~/.config/labwc ~/.config/systemd/user ~/.local/bin"
 step_begin "Enabling linger for '$app_user'"
 if run_quiet loginctl enable-linger "$app_user"; then
   step_ok
@@ -673,11 +673,21 @@ step_ok
 run_step "Setting labwc autostart ownership" chown "$app_user:$app_user" "/home/$app_user/.config/labwc/autostart"
 run_step "Making labwc autostart executable" chmod +x "/home/$app_user/.config/labwc/autostart"
 
-step_begin "Writing kiosk session launcher"
-cat << EOF > /home/$app_user/kiosk/session_start.sh
-#!/bin/sh
-set -eu
+if [ "$edid" != "none" ]; then
+  kiosk_force_mode=1
+  kiosk_mode="1920x1080"
+else
+  kiosk_force_mode=0
+  kiosk_mode=""
+fi
+kiosk_num_displays=$displays
 
+step_begin "Writing kiosk session launcher"
+cat << EOF > /home/$app_user/.local/bin/kiosk
+#!/usr/bin/env bash
+set -euo pipefail
+
+export HOME="/home/$app_user"
 export XDG_RUNTIME_DIR="/run/user/$app_uid"
 export XDG_SESSION_TYPE="wayland"
 export XDG_CURRENT_DESKTOP="labwc"
@@ -691,16 +701,129 @@ export QT_IM_MODULE=wayland
 export SDL_IM_MODULE=wayland
 export XMODIFIERS=@im=wayland
 
+FORCE_MODE="$kiosk_force_mode"
+MODE="$kiosk_mode"
+NUM_DISPLAYS="$kiosk_num_displays"
+TARGET_WAYLAND_DISPLAY="wayland-0"
+
+WAIT_SECS=20
+APPLY_RETRIES=20
+APPLY_RETRY_DELAY_SECS=0.5
+
+log() { echo "kiosk: \$*"; }
+
+wait_for_socket() {
+  local path="\$1" secs="\$2"
+  local deadline=\$((SECONDS + secs))
+  while [ \$SECONDS -lt \$deadline ]; do
+    [ -S "\$path" ] && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+wayland_query() {
+  wlr-randr 2>/dev/null
+}
+
+pick_outputs() {
+  local outs
+  outs="\$(wayland_query | awk '/^HDMI-A-[0-9]+ /{print \$1} /^HDMI-[0-9]+ /{print \$1}' | head -n "\$NUM_DISPLAYS")"
+  echo "\$outs"
+}
+
+start_kiosk_target() {
+  log "Layout applied successfully."
+  export WAYLAND_DISPLAY="\$TARGET_WAYLAND_DISPLAY"
+  systemctl --user import-environment WAYLAND_DISPLAY XDG_RUNTIME_DIR XDG_SESSION_TYPE XDG_CURRENT_DESKTOP GTK_THEME || true
+  if systemctl --user start kiosk.target; then
+    log "Started kiosk.target."
+  else
+    log "Failed to start kiosk.target."
+    return 1
+  fi
+}
+
+init_kiosk_after_wayland_ready() {
+  log "Waiting for Wayland socket..."
+  if ! wait_for_socket "\$XDG_RUNTIME_DIR/\$TARGET_WAYLAND_DISPLAY" "\$WAIT_SECS"; then
+    log "Timed out waiting for \$XDG_RUNTIME_DIR/\$TARGET_WAYLAND_DISPLAY"
+    return 1
+  fi
+
+  local deadline=\$((SECONDS + WAIT_SECS))
+  while [ \$SECONDS -lt \$deadline ]; do
+    if wayland_query >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.1
+  done
+
+  local outs out1 out2
+  outs="\$(pick_outputs)"
+  out1="\$(echo "\$outs" | sed -n '1p')"
+  out2="\$(echo "\$outs" | sed -n '2p')"
+
+  if [ -z "\${out1:-}" ]; then
+    log "Could not find primary HDMI output via wlr-randr. Full output state:"
+    wayland_query || true
+    return 1
+  fi
+
+  if [ "\$NUM_DISPLAYS" -eq 2 ] && [ -z "\${out2:-}" ]; then
+    log "Could not find second HDMI output via wlr-randr. Full output state:"
+    wayland_query || true
+    return 1
+  fi
+
+  for _ in \$(seq 1 "\$APPLY_RETRIES"); do
+    if [ "\$FORCE_MODE" -eq 1 ]; then
+      if [ "\$NUM_DISPLAYS" -eq 2 ]; then
+        if wlr-randr --output "\$out1" --on --mode "\$MODE" --pos 0,0 \
+          && wlr-randr --output "\$out2" --on --mode "\$MODE" --pos 1920,0; then
+          start_kiosk_target
+          return \$?
+        fi
+      else
+        if wlr-randr --output "\$out1" --on --mode "\$MODE" --pos 0,0; then
+          start_kiosk_target
+          return \$?
+        fi
+      fi
+    else
+      if [ "\$NUM_DISPLAYS" -eq 2 ]; then
+        if wlr-randr --output "\$out1" --on --pos 0,0 \
+          && wlr-randr --output "\$out2" --on; then
+          start_kiosk_target
+          return \$?
+        fi
+      else
+        if wlr-randr --output "\$out1" --on --pos 0,0; then
+          start_kiosk_target
+          return \$?
+        fi
+      fi
+    fi
+
+    sleep "\$APPLY_RETRY_DELAY_SECS"
+  done
+
+  log "Failed to apply layout after retries. Current output state:"
+  wayland_query || true
+  return 1
+}
+
 if [ ! -d "\$XDG_RUNTIME_DIR" ] || [ ! -w "\$XDG_RUNTIME_DIR" ]; then
-  echo "session_start: XDG_RUNTIME_DIR '\$XDG_RUNTIME_DIR' is missing or not writable" >&2
+  echo "kiosk: XDG_RUNTIME_DIR '\$XDG_RUNTIME_DIR' is missing or not writable" >&2
   exit 1
 fi
 
+init_kiosk_after_wayland_ready &
 exec dbus-run-session -- labwc
 EOF
 step_ok
-run_step "Setting session launcher ownership" chown "$app_user:$app_user" "/home/$app_user/kiosk/session_start.sh"
-run_step "Making session launcher executable" chmod +x "/home/$app_user/kiosk/session_start.sh"
+run_step "Setting session launcher ownership" chown "$app_user:$app_user" "/home/$app_user/.local/bin/kiosk"
+run_step "Making session launcher executable" chmod +x "/home/$app_user/.local/bin/kiosk"
 
 # create local static app files and browser launchers
 run_step "Creating browser profile/settings directories" su "$app_user" -c "mkdir -p ~/applications/kioskbrowser-1/profile ~/applications/kioskbrowser-1/settings ~/applications/kioskbrowser-2/profile ~/applications/kioskbrowser-2/settings"
@@ -1147,148 +1270,9 @@ run_step "Generating browser 2 local start page" create_kioskbrowser_index 2 160
 run_step "Generating browser 1 launcher" create_kioskbrowser_launcher 1 "HDMI-A-1"
 run_step "Generating browser 2 launcher" create_kioskbrowser_launcher 2 "HDMI-A-2"
 
-# create kiosk-ui-init script to set up display layout after the compositor is ready
-if [ "$edid" != "none" ]; then
-  kiosk_force_mode=1
-  kiosk_mode="1920x1080"
-else
-  kiosk_force_mode=0
-  kiosk_mode=""
-fi
-kiosk_num_displays=$displays
-step_begin "Writing kiosk-ui-init helper"
-cat <<EOF | tee /usr/local/bin/kiosk-ui-init >/dev/null
-#!/usr/bin/env bash
-set -euo pipefail
-
-export HOME="/home/$app_user"
-export XDG_RUNTIME_DIR="/run/user/$app_uid"
-export WAYLAND_DISPLAY="wayland-0"
-
-FORCE_MODE="$kiosk_force_mode"
-MODE="$kiosk_mode"
-NUM_DISPLAYS="$kiosk_num_displays"
-
-WAIT_SECS=20
-APPLY_RETRIES=20
-APPLY_RETRY_DELAY_SECS=0.5
-
-log() { echo "kiosk-ui-init: \$*"; }
-
-wait_for_socket() {
-  local path="\$1" secs="\$2"
-  local deadline=\$((SECONDS + secs))
-  while [ \$SECONDS -lt \$deadline ]; do
-    [ -S "\$path" ] && return 0
-    sleep 0.1
-  done
-  return 1
-}
-
-wayland_query() {
-  wlr-randr 2>/dev/null
-}
-
-pick_outputs() {
-  local outs
-  outs="\$(wayland_query | awk '/^HDMI-A-[0-9]+ /{print \$1} /^HDMI-[0-9]+ /{print \$1}' | head -n "\$NUM_DISPLAYS")"
-  echo "\$outs"
-}
-
-start_kiosk_target() {
-  log "Layout applied successfully."
-  systemctl --user start kiosk.target
-  exit 0
-}
-
-main() {
-  log "Waiting for Wayland socket..."
-  if ! wait_for_socket "\$XDG_RUNTIME_DIR/\$WAYLAND_DISPLAY" "\$WAIT_SECS"; then
-    log "Timed out waiting for \$XDG_RUNTIME_DIR/\$WAYLAND_DISPLAY"
-    exit 1
-  fi
-
-  local deadline=\$((SECONDS + WAIT_SECS))
-  while [ \$SECONDS -lt \$deadline ]; do
-    if wayland_query >/dev/null 2>&1; then
-      break
-    fi
-    sleep 0.1
-  done
-
-  local outs out1 out2
-  outs="\$(pick_outputs)"
-  out1="\$(echo "\$outs" | sed -n '1p')"
-  out2="\$(echo "\$outs" | sed -n '2p')"
-
-  if [ -z "\${out1:-}" ]; then
-    log "Could not find primary HDMI output via wlr-randr. Full output state:"
-    wayland_query || true
-    exit 1
-  fi
-
-  if [ "\$NUM_DISPLAYS" -eq 2 ] && [ -z "\${out2:-}" ]; then
-    log "Could not find second HDMI output via wlr-randr. Full output state:"
-    wayland_query || true
-    exit 1
-  fi
-
-  for _ in \$(seq 1 "\$APPLY_RETRIES"); do
-    if [ "\$FORCE_MODE" -eq 1 ]; then
-      if [ "\$NUM_DISPLAYS" -eq 2 ]; then
-        if wlr-randr --output "\$out1" --on --mode "\$MODE" --pos 0,0 \
-          && wlr-randr --output "\$out2" --on --mode "\$MODE" --pos 1920,0; then
-          start_kiosk_target
-        fi
-      else
-        if wlr-randr --output "\$out1" --on --mode "\$MODE" --pos 0,0; then
-          start_kiosk_target
-        fi
-      fi
-    else
-      if [ "\$NUM_DISPLAYS" -eq 2 ]; then
-        if wlr-randr --output "\$out1" --on --pos 0,0 \
-          && wlr-randr --output "\$out2" --on; then
-          start_kiosk_target
-        fi
-      else
-        if wlr-randr --output "\$out1" --on --pos 0,0; then
-          start_kiosk_target
-        fi
-      fi
-    fi
-
-    sleep "\$APPLY_RETRY_DELAY_SECS"
-  done
-
-  log "Failed to apply layout after retries. Current output state:"
-  wayland_query || true
-  exit 1
-}
-
-main "\$@"
-EOF
-step_ok
-run_step "Making kiosk-ui-init executable" chmod +x /usr/local/bin/kiosk-ui-init
-session_service_env=$(cat <<EOF
-Environment=XDG_RUNTIME_DIR=/run/user/$app_uid
-Environment=XDG_SESSION_TYPE=wayland
-Environment=XDG_CURRENT_DESKTOP=labwc
-EOF
-)
-wayland_client_env=$(cat <<EOF
-Environment=XDG_RUNTIME_DIR=/run/user/$app_uid
-Environment=WAYLAND_DISPLAY=wayland-0
-Environment=XDG_SESSION_TYPE=wayland
-Environment=XDG_CURRENT_DESKTOP=labwc
-EOF
-)
-session_exec="ExecStart=/home/$app_user/kiosk/session_start.sh"
-ui_init_desc="wlr-randr"
-
-# add kiosk-session.service to start the graphical session on tty1 at boot
-step_begin "Writing kiosk-session.service"
-cat << EOF > /etc/systemd/system/kiosk-session.service
+# add kiosk.service to start the graphical session on tty1 at boot
+step_begin "Writing kiosk.service"
+cat << EOF > /etc/systemd/system/kiosk.service
 [Unit]
 Description=Kiosk graphical session on tty1
 After=systemd-user-sessions.service systemd-logind.service
@@ -1300,7 +1284,6 @@ User=$app_user
 Group=$app_user
 WorkingDirectory=/home/$app_user
 Environment=HOME=/home/$app_user
-$session_service_env
 
 TTYPath=/dev/tty1
 TTYReset=yes
@@ -1311,7 +1294,7 @@ StandardOutput=journal
 StandardError=journal
 PAMName=login
 
-$session_exec
+ExecStart=/home/$app_user/.local/bin/kiosk
 Restart=on-failure
 RestartSec=2
 
@@ -1341,29 +1324,6 @@ WantedBy=kiosk.target
 EOF
   step_ok
 fi
-
-# create systemd service to set up display layout after the session is ready
-step_begin "Writing kiosk-ui-init.service"
-cat << EOF > /etc/systemd/system/kiosk-ui-init.service
-[Unit]
-Description=Initialize kiosk display layout ($ui_init_desc)
-Requires=kiosk-session.service
-After=kiosk-session.service
-
-[Service]
-Type=oneshot
-User=$app_user
-Group=$app_user
-WorkingDirectory=/home/$app_user
-Environment=HOME=/home/$app_user
-$wayland_client_env
-ExecStart=/usr/local/bin/kiosk-ui-init
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-EOF
-step_ok
 
 create_kioskbrowser_service() {
   local browser_num="$1"
@@ -1402,8 +1362,7 @@ run_step "Setting kiosk browser user service ownership" chown "$app_user:$app_us
 # finish setting up systemd services and targets
 run_step "Reloading systemd daemon" systemctl daemon-reload
 run_user_systemctl "Reloading kiosk user systemd daemon" daemon-reload
-run_step "Enabling kiosk-session.service" systemctl enable kiosk-session.service
-run_step "Enabling kiosk-ui-init.service" systemctl enable kiosk-ui-init.service
+run_step "Enabling kiosk.service" systemctl enable kiosk.service
 if [ -n "$touch_keyboard_package" ]; then
   run_user_systemctl "Enabling touchkeyboard.service for '$app_user'" enable touchkeyboard.service
 else
