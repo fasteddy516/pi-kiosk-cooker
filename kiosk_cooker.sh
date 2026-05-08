@@ -786,10 +786,10 @@ start_kiosk_target() {
   log "Layout applied successfully."
   export WAYLAND_DISPLAY="\$TARGET_WAYLAND_DISPLAY"
   systemctl --user import-environment WAYLAND_DISPLAY XDG_RUNTIME_DIR XDG_SESSION_TYPE XDG_CURRENT_DESKTOP GTK_THEME || true
-  if systemctl --user start kiosk.target; then
-    log "Started kiosk.target."
+  if systemctl --user restart kiosk.target; then
+    log "Restarted kiosk.target."
   else
-    log "Failed to start kiosk.target."
+    log "Failed to restart kiosk.target."
     return 1
   fi
 }
