@@ -35,6 +35,8 @@ chmod +x kiosk_cooker.sh
 
 `--video=<value>` adds a `video=<value>` token to `/boot/firmware/cmdline.txt`.  This argument may be specified multiple times.  Values are passed through without parsing or validation, so use the exact kernel video argument value you want, for example `--video=HDMI-A-1:1280x800@60D`.  When at least one `--video` argument is specified, all existing `video=` tokens are removed from `cmdline.txt` before the specified ones are added; when no `--video` argument is specified, existing `video=` tokens are left untouched.
 
+`--no-apt-upgrade` skips the full `apt upgrade` step.  By default the script updates package lists and upgrades installed packages before installing kiosk dependencies.
+
 `--edid=<name>` sets the EDID profile to use for the display(s).  Defaults to `none` (skip EDID configuration).
 
 > [!NOTE]
@@ -71,7 +73,7 @@ The full screen browser demo applications included in this script have identifie
 The following is a breakdown of every significant action the script performs, and why.
 
 ### Package installation
-The script sets `DEBIAN_FRONTEND=noninteractive` for the duration of its execution so that `apt` and `dpkg` never block on interactive prompts (e.g. config file conflict dialogs during `apt upgrade`). It then runs `apt update` and `apt upgrade` to bring the system fully up to date, then installs the packages required for a Wayland kiosk session:
+The script sets `DEBIAN_FRONTEND=noninteractive` for the duration of its execution so that `apt` and `dpkg` never block on interactive prompts (e.g. config file conflict dialogs during `apt upgrade`). It then runs `apt update`, runs `apt upgrade` unless `--no-apt-upgrade` is specified, and installs the packages required for a Wayland kiosk session:
 
 | Package | Purpose |
 |---|---|

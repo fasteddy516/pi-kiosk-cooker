@@ -225,6 +225,11 @@ if [ ! -v video ]; then
   video=()
 fi
 
+# set default apt upgrade state if it hasn't been specified
+if [ ! -v apt_upgrade ]; then
+  apt_upgrade=1
+fi
+
 # set default edid if it hasn't been specified
 if [ ! -v edid ]; then
   edid=none
@@ -284,6 +289,9 @@ for arg in "$@"; do
     --video=*)
       video+=("${arg#*=}")
       ;;
+    --no-apt-upgrade)
+      apt_upgrade=0
+      ;;
     --edid=*)
       edid="${arg#*=}"
       ;;
@@ -339,7 +347,12 @@ fi
 
 # update installed packages
 run_step "Updating apt package lists (this may take a few minutes)" apt update
-run_step "Upgrading installed packages (this may take a few minutes)" apt upgrade -y
+if [ "$apt_upgrade" -eq 1 ]; then
+  run_step "Upgrading installed packages (this may take a few minutes)" apt upgrade -y
+else
+  step_begin "Skipping apt upgrade via --no-apt-upgrade"
+  step_ok
+fi
 
 step_begin "Selecting Chromium package"
 browser_package=""
