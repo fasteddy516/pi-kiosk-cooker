@@ -181,6 +181,13 @@ run_user_systemctl() {
   run_step "$text" su "$app_user" -c "XDG_RUNTIME_DIR=/run/user/$app_uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$app_uid/bus systemctl --user $*"
 }
 
+run_user_systemctl_allow_nonzero() {
+  local text="$1"
+  shift
+
+  run_step_allow_nonzero "$text" su "$app_user" -c "XDG_RUNTIME_DIR=/run/user/$app_uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$app_uid/bus systemctl --user $*"
+}
+
 print_line "${C_RED}🔥${C_RESET}${C_LIGHT_BLUE} pi-kiosk-cooker ${SCRIPT_VERSION} by fasteddy516${C_RESET}"
 
 # ensure the script is being run as root
@@ -1140,32 +1147,6 @@ run_step "Generating browser 2 local start page" create_kioskbrowser_index 2 160
 run_step "Generating browser 1 launcher" create_kioskbrowser_launcher 1 "HDMI-A-1"
 run_step "Generating browser 2 launcher" create_kioskbrowser_launcher 2 "HDMI-A-2"
 
-# create wait-for-gui-ready script to ensure the compositor is ready before starting the kiosk application
-step_begin "Writing wait-for-gui-ready helper"
-cat << EOF > /usr/local/bin/wait-for-gui-ready
-#!/usr/bin/env bash
-set -euo pipefail
-export XDG_RUNTIME_DIR="/run/user/$app_uid"
-export WAYLAND_DISPLAY="wayland-0"
-
-for _ in {1..300}; do
-  [ -S "\$XDG_RUNTIME_DIR/\$WAYLAND_DISPLAY" ] && break
-  sleep 0.1
-done
-
-for _ in {1..300}; do
-  if wlr-randr >/dev/null 2>&1; then
-    exit 0
-  fi
-  sleep 0.1
-done
-
-echo "Wayland did not become ready in time" >&2
-exit 1
-EOF
-step_ok
-run_step "Making wait-for-gui-ready executable" chmod +x /usr/local/bin/wait-for-gui-ready
-
 # create kiosk-ui-init script to set up display layout after the compositor is ready
 if [ "$edid" != "none" ]; then
   kiosk_force_mode=1
@@ -1303,7 +1284,6 @@ Environment=XDG_CURRENT_DESKTOP=labwc
 EOF
 )
 session_exec="ExecStart=/home/$app_user/kiosk/session_start.sh"
-session_ready_desc="Wayland"
 ui_init_desc="wlr-randr"
 
 # add kiosk-session.service to start the graphical session on tty1 at boot
@@ -1340,50 +1320,24 @@ WantedBy=multi-user.target
 EOF
 step_ok
 
-# create systemd service to wait for the compositor session to become ready
-step_begin "Writing kiosk-session-ready.service"
-cat << EOF > /etc/systemd/system/kiosk-session-ready.service
-[Unit]
-Description=Wait for kiosk $session_ready_desc session to be ready
-Requires=kiosk-session.service
-After=kiosk-session.service
-
-[Service]
-Type=oneshot
-User=$app_user
-Group=$app_user
-Environment=HOME=/home/$app_user
-$wayland_client_env
-ExecStart=/usr/local/bin/wait-for-gui-ready
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-EOF
-step_ok
-
 # create systemd service for the on-screen touch keyboard (if applicable)
 if [ -n "$touch_keyboard_package" ]; then
-  step_begin "Writing kiosk-touch-keyboard.service"
-  cat << EOF > /etc/systemd/system/kiosk-touch-keyboard.service
+  step_begin "Writing touchkeyboard.service"
+  cat << EOF > /home/$app_user/.config/systemd/user/touchkeyboard.service
 [Unit]
 Description=Kiosk on-screen touch keyboard
-Requires=kiosk-ui-init.service
-After=kiosk-ui-init.service
+PartOf=kiosk.target
+After=kiosk.target
 
 [Service]
 Type=simple
-User=$app_user
-Group=$app_user
-Environment=HOME=/home/$app_user
 Environment=GTK_THEME=Adwaita:dark
-$wayland_client_env
 ExecStart=/usr/bin/squeekboard
 Restart=on-failure
 RestartSec=2
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=kiosk.target
 EOF
   step_ok
 fi
@@ -1393,8 +1347,8 @@ step_begin "Writing kiosk-ui-init.service"
 cat << EOF > /etc/systemd/system/kiosk-ui-init.service
 [Unit]
 Description=Initialize kiosk display layout ($ui_init_desc)
-Requires=kiosk-session-ready.service
-After=kiosk-session-ready.service
+Requires=kiosk-session.service
+After=kiosk-session.service
 
 [Service]
 Type=oneshot
@@ -1449,17 +1403,11 @@ run_step "Setting kiosk browser user service ownership" chown "$app_user:$app_us
 run_step "Reloading systemd daemon" systemctl daemon-reload
 run_user_systemctl "Reloading kiosk user systemd daemon" daemon-reload
 run_step "Enabling kiosk-session.service" systemctl enable kiosk-session.service
-run_step "Enabling kiosk-session-ready.service" systemctl enable kiosk-session-ready.service
 run_step "Enabling kiosk-ui-init.service" systemctl enable kiosk-ui-init.service
 if [ -n "$touch_keyboard_package" ]; then
-  run_step "Enabling kiosk-touch-keyboard.service" systemctl enable kiosk-touch-keyboard.service
+  run_user_systemctl "Enabling touchkeyboard.service for '$app_user'" enable touchkeyboard.service
 else
-  step_begin "Disabling kiosk-touch-keyboard.service"
-  if run_quiet systemctl disable --now kiosk-touch-keyboard.service; then
-    step_ok
-  else
-    step_error_continue "kiosk-touch-keyboard.service was not present or could not be disabled"
-  fi
+  run_user_systemctl_allow_nonzero "Disabling touchkeyboard.service for '$app_user'" disable --now touchkeyboard.service
 fi
 if [ "$default_application" -eq 1 ]; then
   run_user_systemctl "Enabling kioskbrowser-1.service for '$app_user'" enable kioskbrowser-1.service
