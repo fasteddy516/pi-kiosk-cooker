@@ -696,13 +696,13 @@ run_step "Setting session launcher ownership" chown "$app_user:$app_user" "/home
 run_step "Making session launcher executable" chmod +x "/home/$app_user/kiosk/session_start.sh"
 
 # create local static app files and browser launchers
-run_step "Creating browser profile/settings directories" su "$app_user" -c "mkdir -p ~/kiosk/kiosk_browser_1/profile ~/kiosk/kiosk_browser_1/settings ~/kiosk/kiosk_browser_2/profile ~/kiosk/kiosk_browser_2/settings"
-create_kiosk_browser_index() {
+run_step "Creating browser profile/settings directories" su "$app_user" -c "mkdir -p ~/applications/kioskbrowser-1/profile ~/applications/kioskbrowser-1/settings ~/applications/kioskbrowser-2/profile ~/applications/kioskbrowser-2/settings"
+create_kioskbrowser_index() {
   local browser_num="$1"
-  local settings_dir="~/kiosk/kiosk_browser_${browser_num}/settings"
+  local settings_dir="~/applications/kioskbrowser-${browser_num}/settings"
   local tint="$2"
 
-  cat << EOF > /home/$app_user/kiosk/kiosk_browser_${browser_num}/index.html
+  cat << EOF > /home/$app_user/applications/kioskbrowser-${browser_num}/index.html
 <!doctype html>
 <html lang="en">
 <head>
@@ -1063,14 +1063,14 @@ create_kiosk_browser_index() {
 </html>
 EOF
 
-  chown $app_user:$app_user /home/$app_user/kiosk/kiosk_browser_${browser_num}/index.html
+  chown $app_user:$app_user /home/$app_user/applications/kioskbrowser-${browser_num}/index.html
 }
 
-create_kiosk_browser_launcher() {
+create_kioskbrowser_launcher() {
   local browser_num="$1"
   local output_name="$2"
 
-  cat << EOF > /home/$app_user/kiosk/kiosk_browser_${browser_num}/launch_kiosk_browser_${browser_num}.sh
+  cat << EOF > /home/$app_user/applications/kioskbrowser-${browser_num}/start.sh
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -1088,7 +1088,7 @@ else
   exit 1
 fi
 
-APP_DIR="\$HOME/kiosk/kiosk_browser_${browser_num}"
+APP_DIR="\$HOME/applications/kioskbrowser-${browser_num}"
 PROFILE_DIR="\$APP_DIR/profile"
 URL_FILE="\$APP_DIR/settings/startup_url.txt"
 DEFAULT_URL="file://\$APP_DIR/index.html"
@@ -1130,15 +1130,15 @@ exec "\$BROWSER_BIN" \
   --profile-directory="\$OUTPUT_NAME"
 EOF
 
-  chown $app_user:$app_user /home/$app_user/kiosk/kiosk_browser_${browser_num}/launch_kiosk_browser_${browser_num}.sh
-  chmod +x /home/$app_user/kiosk/kiosk_browser_${browser_num}/launch_kiosk_browser_${browser_num}.sh
+  chown $app_user:$app_user /home/$app_user/applications/kioskbrowser-${browser_num}/start.sh
+  chmod +x /home/$app_user/applications/kioskbrowser-${browser_num}/start.sh
 }
 
-run_step "Generating browser 1 local start page" create_kiosk_browser_index 1 250
-run_step "Generating browser 2 local start page" create_kiosk_browser_index 2 160
+run_step "Generating browser 1 local start page" create_kioskbrowser_index 1 250
+run_step "Generating browser 2 local start page" create_kioskbrowser_index 2 160
 
-run_step "Generating browser 1 launcher" create_kiosk_browser_launcher 1 "HDMI-A-1"
-run_step "Generating browser 2 launcher" create_kiosk_browser_launcher 2 "HDMI-A-2"
+run_step "Generating browser 1 launcher" create_kioskbrowser_launcher 1 "HDMI-A-1"
+run_step "Generating browser 2 launcher" create_kioskbrowser_launcher 2 "HDMI-A-2"
 
 # create wait-for-gui-ready script to ensure the compositor is ready before starting the kiosk application
 step_begin "Writing wait-for-gui-ready helper"
@@ -1411,9 +1411,9 @@ WantedBy=multi-user.target
 EOF
 step_ok
 
-create_kiosk_browser_service() {
+create_kioskbrowser_service() {
   local browser_num="$1"
-  cat << EOF > /home/$app_user/.config/systemd/user/kiosk_browser_${browser_num}.service
+  cat << EOF > /home/$app_user/.config/systemd/user/kioskbrowser-${browser_num}.service
 [Unit]
 Description=Kiosk browser on display $browser_num
 PartOf=kiosk.target
@@ -1421,7 +1421,7 @@ After=kiosk.target
 
 [Service]
 Type=simple
-ExecStart=/home/$app_user/kiosk/kiosk_browser_${browser_num}/launch_kiosk_browser_${browser_num}.sh
+ExecStart=/home/$app_user/applications/kioskbrowser-${browser_num}/start.sh
 Restart=always
 RestartSec=2
 
@@ -1441,9 +1441,9 @@ step_ok
 run_step "Setting kiosk user systemd unit ownership" chown -R "$app_user:$app_user" "/home/$app_user/.config/systemd"
 
 # create browser services for display 1 and display 2
-run_step "Writing kiosk_browser_1.service" create_kiosk_browser_service 1
-run_step "Writing kiosk_browser_2.service" create_kiosk_browser_service 2
-run_step "Setting kiosk browser user service ownership" chown "$app_user:$app_user" "/home/$app_user/.config/systemd/user/kiosk_browser_1.service" "/home/$app_user/.config/systemd/user/kiosk_browser_2.service"
+run_step "Writing kioskbrowser-1.service" create_kioskbrowser_service 1
+run_step "Writing kioskbrowser-2.service" create_kioskbrowser_service 2
+run_step "Setting kiosk browser user service ownership" chown "$app_user:$app_user" "/home/$app_user/.config/systemd/user/kioskbrowser-1.service" "/home/$app_user/.config/systemd/user/kioskbrowser-2.service"
 
 # finish setting up systemd services and targets
 run_step "Reloading systemd daemon" systemctl daemon-reload
@@ -1462,14 +1462,14 @@ else
   fi
 fi
 if [ "$default_application" -eq 1 ]; then
-  run_user_systemctl "Enabling kiosk_browser_1.service for '$app_user'" enable kiosk_browser_1.service
+  run_user_systemctl "Enabling kioskbrowser-1.service for '$app_user'" enable kioskbrowser-1.service
   if [ "$displays" -eq 2 ]; then
-    run_user_systemctl "Enabling kiosk_browser_2.service for '$app_user'" enable kiosk_browser_2.service
+    run_user_systemctl "Enabling kioskbrowser-2.service for '$app_user'" enable kioskbrowser-2.service
   else
-    run_user_systemctl "Disabling kiosk_browser_2.service for '$app_user'" disable --now kiosk_browser_2.service
+    run_user_systemctl "Disabling kioskbrowser-2.service for '$app_user'" disable --now kioskbrowser-2.service
   fi
 else
-  run_user_systemctl "Disabling default kiosk browser services for '$app_user'" disable --now kiosk_browser_1.service kiosk_browser_2.service
+  run_user_systemctl "Disabling default kiosk browser services for '$app_user'" disable --now kioskbrowser-1.service kioskbrowser-2.service
 fi
 
 # remind about rpi-connect signin if applicable

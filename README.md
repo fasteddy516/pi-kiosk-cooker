@@ -44,7 +44,7 @@ chmod +x kiosk_cooker.sh
 
 `--no-rpi-connect` skips installation of Raspberry Pi Connect (`rpi-connect`).  Connect is installed and its user services enabled globally by default.
 
-`--no-default-application` disables the generated default Chromium kiosk browser user services (`kiosk_browser_1.service` and `kiosk_browser_2.service`).  When omitted, the default browser application services are enabled according to the configured display count.
+`--no-default-application` disables the generated default Chromium kiosk browser user services (`kioskbrowser-1.service` and `kioskbrowser-2.service`).  When omitted, the default browser application services are enabled according to the configured display count.
 
 `--no-reboot` disables the automatic reboot at the end of the script.
 
@@ -138,27 +138,27 @@ At compositor startup, labwc is configured to run the `HideCursor` action on fir
 
 **`session_start.sh`** also exports Wayland IM variables (`GTK_IM_MODULE`, `QT_IM_MODULE`, `SDL_IM_MODULE`, `XMODIFIERS`) to improve on-screen keyboard activation across toolkits.
 
-### Browser kiosk service (`kiosk_browser_1.service`)
-After the graphical session and display layout are ready, `kiosk_browser_1.service` starts a fullscreen Chromium kiosk instance for display 1 and is configured with `Restart=always` so it automatically respawns if it exits or crashes. This is a user-level systemd service installed at `/home/<app_user>/.config/systemd/user/kiosk_browser_1.service` and enabled under `kiosk.target`.
+### Browser kiosk service (`kioskbrowser-1.service`)
+After the graphical session and display layout are ready, `kioskbrowser-1.service` starts a fullscreen Chromium kiosk instance for display 1 and is configured with `Restart=always` so it automatically respawns if it exits or crashes. This is a user-level systemd service installed at `/home/<app_user>/.config/systemd/user/kioskbrowser-1.service` and enabled under `kiosk.target`.
 
-The service runs `/home/<app_user>/kiosk/kiosk_browser_1/launch_kiosk_browser_1.sh`, which launches Chromium in app mode (`--app`, `--start-maximized`) with startup prompts and browser chrome disabled. App+maximized mode is used instead of `--kiosk`/`--start-fullscreen` because Chromium's true kiosk mode uses exclusive Wayland fullscreen, which prevents compositor layer-shell surfaces (such as `squeekboard`) from rendering above the browser window — meaning the on-screen keyboard would always appear behind it. App mode with `--start-maximized` fills the display without claiming exclusive fullscreen, allowing the OSK to overlay the browser correctly. At launch time, the script queries Wayland output geometry (`wlr-randr`) for both output position and current mode so the window origin and size match `HDMI-A-1` reliably. The launcher enables Wayland IME support (`--enable-wayland-ime`), enables Chromium virtual keyboard and CSD features (`--enable-features=...,VirtualKeyboard,WaylandWindowDecorations`, `--enable-virtual-keyboard`), and forces touch input mode (`--touch-events=enabled`). `WaylandWindowDecorations` is critical: it causes Chromium to negotiate client-side decorations with labwc via the `xdg-decoration` protocol, and when maximized Chromium suppresses its own title bar — keeping the window borderless without relying on compositor-level window rules.
+The service runs `/home/<app_user>/applications/kioskbrowser-1/start.sh`, which launches Chromium in app mode (`--app`, `--start-maximized`) with startup prompts and browser chrome disabled. App+maximized mode is used instead of `--kiosk`/`--start-fullscreen` because Chromium's true kiosk mode uses exclusive Wayland fullscreen, which prevents compositor layer-shell surfaces (such as `squeekboard`) from rendering above the browser window — meaning the on-screen keyboard would always appear behind it. App mode with `--start-maximized` fills the display without claiming exclusive fullscreen, allowing the OSK to overlay the browser correctly. At launch time, the script queries Wayland output geometry (`wlr-randr`) for both output position and current mode so the window origin and size match `HDMI-A-1` reliably. The launcher enables Wayland IME support (`--enable-wayland-ime`), enables Chromium virtual keyboard and CSD features (`--enable-features=...,VirtualKeyboard,WaylandWindowDecorations`, `--enable-virtual-keyboard`), and forces touch input mode (`--touch-events=enabled`). `WaylandWindowDecorations` is critical: it causes Chromium to negotiate client-side decorations with labwc via the `xdg-decoration` protocol, and when maximized Chromium suppresses its own title bar — keeping the window borderless without relying on compositor-level window rules.
 
-Initial startup content is a local static page at `/home/<app_user>/kiosk/kiosk_browser_1/index.html`.
+Initial startup content is a local static page at `/home/<app_user>/applications/kioskbrowser-1/index.html`.
 
-That page includes a URL field and **Set start page** button. Enter a URL, tap the button, and Chromium will prompt once to choose a folder. Select `/home/<app_user>/kiosk/kiosk_browser_1/settings`; the page then writes `startup_url.txt` in that folder and immediately navigates to the entered URL.
+That page includes a URL field and **Set start page** button. Enter a URL, tap the button, and Chromium will prompt once to choose a folder. Select `/home/<app_user>/applications/kioskbrowser-1/settings`; the page then writes `startup_url.txt` in that folder and immediately navigates to the entered URL.
 
-You can still set the URL manually by creating `/home/<app_user>/kiosk/kiosk_browser_1/settings/startup_url.txt` with a single line containing the URL (for example `https://example.com`).
+You can still set the URL manually by creating `/home/<app_user>/applications/kioskbrowser-1/settings/startup_url.txt` with a single line containing the URL (for example `https://example.com`).
 
 When present and valid (`http://`, `https://`, or `file://`), that value is used. If the file is missing or invalid, the launcher falls back to the local startup page.
 
-### Display 2 service (`kiosk_browser_2.service`)
+### Display 2 service (`kioskbrowser-2.service`)
 The script also creates a parallel display 2 browser setup:
 
-- `/home/<app_user>/kiosk/kiosk_browser_2/index.html`
-- `/home/<app_user>/kiosk/kiosk_browser_2/launch_kiosk_browser_2.sh`
-- `/home/<app_user>/.config/systemd/user/kiosk_browser_2.service`
+- `/home/<app_user>/applications/kioskbrowser-2/index.html`
+- `/home/<app_user>/applications/kioskbrowser-2/start.sh`
+- `/home/<app_user>/.config/systemd/user/kioskbrowser-2.service`
 
-When the script runs with `--displays=2`, `kiosk_browser_2.service` is enabled automatically. For single-display installs (`--displays=1`), it is left disabled. Display 2 now uses the same startup page behavior as display 1, including the in-page URL field and **Set start page** flow that writes to `/home/<app_user>/kiosk/kiosk_browser_2/settings/startup_url.txt`. The display 2 launcher targets `HDMI-A-2` when present.
+When the script runs with `--displays=2`, `kioskbrowser-2.service` is enabled automatically. For single-display installs (`--displays=1`), it is left disabled. Display 2 now uses the same startup page behavior as display 1, including the in-page URL field and **Set start page** flow that writes to `/home/<app_user>/applications/kioskbrowser-2/settings/startup_url.txt`. The display 2 launcher targets `HDMI-A-2` when present.
 
 ---
 
