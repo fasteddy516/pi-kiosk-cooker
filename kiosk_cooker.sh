@@ -1524,6 +1524,7 @@ if [ $rpi_connect -eq 1 ]; then
 fi
 
 # all done - countdown to reboot
+cleanup_command_logs
 if [ $reboot -eq 1 ]; then
   print_line ""
   for i in $(seq 30 -1 1) ; do echo -ne "\r${C_BRIGHT_RED}*** Rebooting in $i seconds.  (CTRL-C to cancel) ***${C_RESET}" ; sleep 1 ; done
