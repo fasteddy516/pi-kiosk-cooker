@@ -831,8 +831,70 @@ if [ ! -d "\$XDG_RUNTIME_DIR" ] || [ ! -w "\$XDG_RUNTIME_DIR" ]; then
   exit 1
 fi
 
-init_kiosk_after_wayland_ready &
-exec dbus-run-session -- labwc
+status_dir="\$XDG_RUNTIME_DIR/kiosk-status-\$\$"
+init_status_file="\$status_dir/init.status"
+labwc_status_file="\$status_dir/labwc.status"
+init_pid=""
+labwc_pid=""
+
+cleanup_children() {
+  [ -n "\$init_pid" ] && kill "\$init_pid" 2>/dev/null || true
+  [ -n "\$labwc_pid" ] && kill "\$labwc_pid" 2>/dev/null || true
+  [ -n "\$init_pid" ] && wait "\$init_pid" 2>/dev/null || true
+  [ -n "\$labwc_pid" ] && wait "\$labwc_pid" 2>/dev/null || true
+  rm -rf "\$status_dir"
+}
+
+trap 'cleanup_children; exit 143' HUP INT TERM
+
+mkdir -p "\$status_dir"
+
+(
+  set +e
+  init_kiosk_after_wayland_ready
+  printf '%s\n' "\$?" > "\$init_status_file"
+) &
+init_pid=\$!
+
+(
+  set +e
+  dbus-run-session -- labwc
+  printf '%s\n' "\$?" > "\$labwc_status_file"
+) &
+labwc_pid=\$!
+
+while true; do
+  if [ -f "\$init_status_file" ]; then
+    init_status="\$(cat "\$init_status_file")"
+    if [ "\$init_status" -ne 0 ]; then
+      log "Kiosk initialization failed with status \$init_status; stopping labwc."
+      kill "\$labwc_pid" 2>/dev/null || true
+      wait "\$labwc_pid" 2>/dev/null || true
+      rm -rf "\$status_dir"
+      exit "\$init_status"
+    fi
+
+    log "Kiosk initialization completed successfully."
+    if wait "\$labwc_pid"; then
+      labwc_status=0
+    else
+      labwc_status=\$?
+    fi
+    rm -rf "\$status_dir"
+    exit "\$labwc_status"
+  fi
+
+  if [ -f "\$labwc_status_file" ]; then
+    labwc_status="\$(cat "\$labwc_status_file")"
+    log "labwc exited with status \$labwc_status before kiosk initialization completed."
+    kill "\$init_pid" 2>/dev/null || true
+    wait "\$init_pid" 2>/dev/null || true
+    rm -rf "\$status_dir"
+    exit "\$labwc_status"
+  fi
+
+  sleep 0.2
+done
 EOF
   step_ok
 else
