@@ -582,7 +582,7 @@ else
   step_error_continue "Could not apply GTK dark mode preference"
 fi
 if [ $rpi_connect -eq 1 ]; then
-  step_begin "Enabling Raspberry Pi Connect user services"
+  step_begin "Enabling Raspberry Pi Connect user services (best effort)"
   if [ -f /usr/lib/systemd/user/rpi-connect.service ]; then
     systemctl --global enable rpi-connect.service >/dev/null 2>&1 || true
   fi
@@ -594,6 +594,7 @@ if [ $rpi_connect -eq 1 ]; then
   fi
   su "$app_user" -c "XDG_RUNTIME_DIR=/run/user/$app_uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$app_uid/bus systemctl --user start rpi-connect.service rpi-connect-wayvnc.service rpi-connect-signin.path" >/dev/null 2>&1 || true
   step_ok
+  print_line "    ${C_YELLOW}! note: Raspberry Pi Connect service setup is best effort; missing units or start failures are ignored${C_RESET}"
   labwc_connect_autostart=$(cat <<'EOF'
 
 # Keep user systemd/dbus environment aligned with this Wayland session.

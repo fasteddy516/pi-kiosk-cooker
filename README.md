@@ -163,7 +163,7 @@ When the script runs with `--displays=2`, `kioskbrowser-2.service` is enabled au
 ## Raspberry Pi Connect
 This script uses a Wayland/labwc kiosk session, which is compatible with full Raspberry Pi Connect screen sharing when `rpi-connect` is installed.  (Previous versions of this script used an X11/Openbox session, which does not support RPi Connect screen sharing.) 
 
-By default, the script installs full Connect (not lite) and enables `rpi-connect.service` and `rpi-connect-wayvnc.service` at the global user level. Pass `--no-rpi-connect` to skip installation entirely.
+By default, the script installs full Connect (not lite) and attempts to enable `rpi-connect.service` and `rpi-connect-wayvnc.service` at the global user level. This setup is treated as best effort: missing units or immediate start failures are ignored so the kiosk install can continue. Pass `--no-rpi-connect` to skip installation entirely.
 
 Account linking requires a one-time sign-in after installation.  Because screen sharing runs under the kiosk application user, sign-in must be performed as that user — not as a separate admin account.  The easiest way to do this is via a Raspberry Pi Connect remote shell session:
 
