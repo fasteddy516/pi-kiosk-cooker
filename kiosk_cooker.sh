@@ -37,6 +37,7 @@ LAST_COMMAND=""
 LAST_EXIT_CODE=0
 COMMAND_STDOUT_LOG=""
 COMMAND_STDERR_LOG=""
+KEEP_COMMAND_LOGS=0
 
 print_line() {
   printf '%b\n' "$1"
@@ -48,6 +49,7 @@ init_command_logs() {
 }
 
 cleanup_command_logs() {
+  [ "$KEEP_COMMAND_LOGS" -eq 1 ] && return
   [ -n "$COMMAND_STDOUT_LOG" ] && [ -f "$COMMAND_STDOUT_LOG" ] && rm -f "$COMMAND_STDOUT_LOG"
   [ -n "$COMMAND_STDERR_LOG" ] && [ -f "$COMMAND_STDERR_LOG" ] && rm -f "$COMMAND_STDERR_LOG"
 }
@@ -136,6 +138,7 @@ step_error() {
     print_line "    ! $message"
   fi
   print_last_command_hint
+  KEEP_COMMAND_LOGS=1
   exit 1
 }
 
@@ -178,7 +181,20 @@ run_user_systemctl() {
   local text="$1"
   shift
 
-  run_step "$text" su "$app_user" -c "XDG_RUNTIME_DIR=/run/user/$app_uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$app_uid/bus systemctl --user $*"
+  run_step "$text" runuser -u "$app_user" -- env \
+    "XDG_RUNTIME_DIR=/run/user/$app_uid" \
+    "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$app_uid/bus" \
+    systemctl --user "$@"
+}
+
+run_user_systemctl_allow_nonzero() {
+  local text="$1"
+  shift
+
+  run_step_allow_nonzero "$text" runuser -u "$app_user" -- env \
+    "XDG_RUNTIME_DIR=/run/user/$app_uid" \
+    "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$app_uid/bus" \
+    systemctl --user "$@"
 }
 
 print_line "${C_RED}🔥${C_RESET}${C_LIGHT_BLUE} pi-kiosk-cooker ${SCRIPT_VERSION} by fasteddy516${C_RESET}"
@@ -191,6 +207,7 @@ fi
 if ! init_command_logs; then
   fail "Unable to create temporary command log files under /tmp"
 fi
+trap cleanup_command_logs EXIT
 
 # suppress interactive prompts from apt/dpkg for the duration of this script
 export DEBIAN_FRONTEND=noninteractive
@@ -200,7 +217,7 @@ if [ ! -v app_user ]; then
   app_user=kiosk
 fi
 
-# application password has no default and must be provided via --password
+# application password has no default; it is required when creating app_user
 
 # set default number of displays if it hasn't been specified
 if [ ! -v displays ]; then
@@ -210,6 +227,11 @@ fi
 # set default video kernel command-line entries if they haven't been specified
 if [ ! -v video ]; then
   video=()
+fi
+
+# set default apt upgrade state if it hasn't been specified
+if [ ! -v apt_upgrade ]; then
+  apt_upgrade=1
 fi
 
 # set default edid if it hasn't been specified
@@ -271,6 +293,9 @@ for arg in "$@"; do
     --video=*)
       video+=("${arg#*=}")
       ;;
+    --no-apt-upgrade)
+      apt_upgrade=0
+      ;;
     --edid=*)
       edid="${arg#*=}"
       ;;
@@ -295,17 +320,35 @@ for arg in "$@"; do
   esac
 done
 
-# require a non-empty password to be explicitly provided
-if [ -z "${app_password:-}" ]; then
-  fail "Missing required argument: --password=<password>"
+if [[ ! "$app_user" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]]; then
+  fail "Invalid value for --user: '$app_user' (must be a valid Linux username)"
 fi
 
-# write remembered arguments (all args except --remember itself)
-if [ $remember -eq 1 ]; then
+case "$edid" in
+  none|1080P-2CH)
+    ;;
+  *)
+    fail "Invalid value for --edid: '$edid' (supported values: none, 1080P-2CH)"
+    ;;
+esac
+
+# require a non-empty password only when creating a new user
+if ! getent passwd "$app_user" > /dev/null 2>&1 && [ -z "${app_password:-}" ]; then
+  fail "Missing required argument for new user '$app_user': --password=<password>"
+fi
+
+# write remembered arguments (all args except --remember and --password)
+if [ "$remember" -eq 1 ]; then
   step_begin "Saving remembered arguments to $memory_file"
   saved=()
   for arg in "${cli_args[@]}"; do
-    [ "$arg" != "--remember" ] && saved+=("$arg")
+    case "$arg" in
+      --remember|--password=*)
+        ;;
+      *)
+        saved+=("$arg")
+        ;;
+    esac
   done
   if printf '%s\n' "${saved[@]}" > "$memory_file"; then
     step_ok
@@ -326,7 +369,12 @@ fi
 
 # update installed packages
 run_step "Updating apt package lists (this may take a few minutes)" apt update
-run_step "Upgrading installed packages (this may take a few minutes)" apt upgrade -y
+if [ "$apt_upgrade" -eq 1 ]; then
+  run_step "Upgrading installed packages (this may take a few minutes)" apt upgrade -y
+else
+  step_begin "Skipping apt upgrade via --no-apt-upgrade"
+  step_ok
+fi
 
 step_begin "Selecting Chromium package"
 browser_package=""
@@ -342,7 +390,7 @@ if [ -z "$browser_package" ]; then
 fi
 step_ok
 
-if [ $touch_keyboard -eq 1 ]; then
+if [ "$touch_keyboard" -eq 1 ]; then
   step_begin "Checking touch keyboard package availability"
   squeekboard_version="$(apt-cache policy squeekboard 2>/dev/null | awk '/Candidate:/ {print $2; exit}')"
   if [ -n "$squeekboard_version" ] && [ "$squeekboard_version" != "(none)" ]; then
@@ -358,14 +406,14 @@ else
   step_ok
 fi
 
-kiosk_packages="labwc wlr-randr wlopm wayland-protocols xwayland dbus-user-session seatd $browser_package"
+kiosk_packages=(labwc wlr-randr wlopm wayland-protocols xwayland dbus-user-session seatd "$browser_package")
 if [ -n "$touch_keyboard_package" ]; then
-  kiosk_packages="$kiosk_packages $touch_keyboard_package"
+  kiosk_packages+=("$touch_keyboard_package")
 fi
-if [ $rpi_connect -eq 1 ]; then
-  kiosk_packages="$kiosk_packages rpi-connect"
+if [ "$rpi_connect" -eq 1 ]; then
+  kiosk_packages+=(rpi-connect)
 fi
-run_step "Installing required packages (this may take a few minutes)" apt install -y $kiosk_packages
+run_step "Installing required packages (this may take a few minutes)" apt install -y "${kiosk_packages[@]}"
 
 # remove orphaned packages
 run_step "Removing orphaned packages (this may take a few minutes)" apt autoremove -y
@@ -392,7 +440,7 @@ fi
 
 # disable overscan for active hdmi outputs
 run_step_allow_nonzero "Disabling overscan on HDMI-A-1" raspi-config nonint do_overscan_kms 1 1
-if [ $displays -eq 2 ]; then
+if [ "$displays" -eq 2 ]; then
   run_step_allow_nonzero "Disabling overscan on HDMI-A-2" raspi-config nonint do_overscan_kms 2 1
 fi
 
@@ -401,7 +449,7 @@ run_step_allow_nonzero "Disabling screen blanking" raspi-config nonint do_blanki
 
 # install edid file if specified
 if [ "$edid" != "none" ]; then
-  run_step "Installing EDID firmware file" mv "./${edid}.edid" /lib/firmware/${edid}.edid
+  run_step "Installing EDID firmware file" mv "./${edid}.edid" "/lib/firmware/${edid}.edid"
 fi
 
 # Read current cmdline configuration
@@ -471,8 +519,12 @@ fi
 
 # create default application user if necessary
 step_begin "Ensuring user '$app_user' exists"
-if grep "^$app_user:" /etc/passwd > /dev/null 2>&1; then
+if getent passwd "$app_user" > /dev/null 2>&1; then
+  if ! getent group "$app_user" > /dev/null 2>&1; then
+    step_error "User '$app_user' already exists, but matching group '$app_user' does not exist"
+  fi
   step_ok
+  print_line "    ${C_YELLOW}! warning: user '$app_user' already exists; password will not be changed${C_RESET}"
 else
   if run_quiet useradd -s /bin/bash -p "$(openssl passwd -6 "$app_password")" "$app_user" --create-home; then
     step_ok
@@ -528,7 +580,7 @@ else
 fi
 
 # create compositor/session startup files
-run_step "Creating kiosk config directories" su "$app_user" -c "mkdir -p ~/.config/labwc ~/.config/systemd/user ~/kiosk"
+run_step "Creating kiosk config directories" su "$app_user" -c "mkdir -p ~/.config/labwc ~/.config/systemd/user ~/.local/bin"
 step_begin "Enabling linger for '$app_user'"
 if run_quiet loginctl enable-linger "$app_user"; then
   step_ok
@@ -551,8 +603,8 @@ if run_quiet su "$app_user" -c "gsettings set org.gnome.desktop.interface color-
 else
   step_error_continue "Could not apply GTK dark mode preference"
 fi
-if [ $rpi_connect -eq 1 ]; then
-  step_begin "Enabling Raspberry Pi Connect user services"
+if [ "$rpi_connect" -eq 1 ]; then
+  step_begin "Enabling Raspberry Pi Connect user services (best effort)"
   if [ -f /usr/lib/systemd/user/rpi-connect.service ]; then
     systemctl --global enable rpi-connect.service >/dev/null 2>&1 || true
   fi
@@ -564,6 +616,7 @@ if [ $rpi_connect -eq 1 ]; then
   fi
   su "$app_user" -c "XDG_RUNTIME_DIR=/run/user/$app_uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$app_uid/bus systemctl --user start rpi-connect.service rpi-connect-wayvnc.service rpi-connect-signin.path" >/dev/null 2>&1 || true
   step_ok
+  print_line "    ${C_YELLOW}! note: Raspberry Pi Connect service setup is best effort; missing units or start failures are ignored${C_RESET}"
   labwc_connect_autostart=$(cat <<'EOF'
 
 # Keep user systemd/dbus environment aligned with this Wayland session.
@@ -584,7 +637,7 @@ else
 fi
 run_step "Creating labwc config directory" su "$app_user" -c "mkdir -p ~/.config/labwc"
 step_begin "Writing labwc rc.xml"
-cat << 'EOF' > /home/$app_user/.config/labwc/rc.xml
+if cat << 'EOF' > "/home/$app_user/.config/labwc/rc.xml"; then
 <?xml version="1.0"?>
 <labwc_config>
   <core>
@@ -644,33 +697,52 @@ cat << 'EOF' > /home/$app_user/.config/labwc/rc.xml
   </windowRules>
 </labwc_config>
 EOF
-step_ok
+  step_ok
+else
+  step_error "Unable to write /home/$app_user/.config/labwc/rc.xml"
+fi
 # Create a zero-size labwc theme so even if SSD is applied it renders invisibly
 run_step "Setting ownership for labwc config" chown "$app_user:$app_user" "/home/$app_user/.config/labwc/rc.xml"
 run_step "Creating kiosk theme directory" su "$app_user" -c "mkdir -p ~/.local/share/themes/kiosk/openbox-3"
 step_begin "Writing kiosk theme configuration"
-cat << 'EOF' > /home/$app_user/.local/share/themes/kiosk/openbox-3/themerc
+if cat << 'EOF' > "/home/$app_user/.local/share/themes/kiosk/openbox-3/themerc"; then
 border.width: 0
 padding.width: 0
 padding.height: 0
 titlebar.height: 0
 EOF
-step_ok
+  step_ok
+else
+  step_error "Unable to write /home/$app_user/.local/share/themes/kiosk/openbox-3/themerc"
+fi
 run_step "Setting ownership for kiosk theme files" chown -R "$app_user:$app_user" "/home/$app_user/.local/share/themes"
 step_begin "Writing labwc autostart script"
-cat << EOF > /home/$app_user/.config/labwc/autostart
+if cat << EOF > "/home/$app_user/.config/labwc/autostart"; then
 #!/bin/sh
 $labwc_connect_autostart
 EOF
-step_ok
+  step_ok
+else
+  step_error "Unable to write /home/$app_user/.config/labwc/autostart"
+fi
 run_step "Setting labwc autostart ownership" chown "$app_user:$app_user" "/home/$app_user/.config/labwc/autostart"
 run_step "Making labwc autostart executable" chmod +x "/home/$app_user/.config/labwc/autostart"
 
-step_begin "Writing kiosk session launcher"
-cat << EOF > /home/$app_user/kiosk/session_start.sh
-#!/bin/sh
-set -eu
+if [ "$edid" != "none" ]; then
+  kiosk_force_mode=1
+  kiosk_mode="1920x1080"
+else
+  kiosk_force_mode=0
+  kiosk_mode=""
+fi
+kiosk_num_displays=$displays
 
+step_begin "Writing kiosk session launcher"
+if cat << EOF > "/home/$app_user/.local/bin/kiosk"; then
+#!/usr/bin/env bash
+set -euo pipefail
+
+export HOME="/home/$app_user"
 export XDG_RUNTIME_DIR="/run/user/$app_uid"
 export XDG_SESSION_TYPE="wayland"
 export XDG_CURRENT_DESKTOP="labwc"
@@ -684,25 +756,229 @@ export QT_IM_MODULE=wayland
 export SDL_IM_MODULE=wayland
 export XMODIFIERS=@im=wayland
 
+FORCE_MODE="$kiosk_force_mode"
+MODE="$kiosk_mode"
+NUM_DISPLAYS="$kiosk_num_displays"
+TARGET_WAYLAND_DISPLAY="wayland-0"
+
+WAIT_SECS=20
+APPLY_RETRIES=20
+APPLY_RETRY_DELAY_SECS=0.5
+
+log() { echo "kiosk: \$*"; }
+
+wait_for_socket() {
+  local path="\$1" secs="\$2"
+  local deadline=\$((SECONDS + secs))
+  while [ \$SECONDS -lt \$deadline ]; do
+    [ -S "\$path" ] && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+wayland_query() {
+  wlr-randr 2>/dev/null
+}
+
+pick_outputs() {
+  local outs
+  outs="\$(wayland_query | awk '/^HDMI-A-[0-9]+ /{print \$1} /^HDMI-[0-9]+ /{print \$1}' | head -n "\$NUM_DISPLAYS")"
+  echo "\$outs"
+}
+
+current_output_width() {
+  local output="\$1"
+  wayland_query | awk -v output="\$output" '
+    \$1 == output { in_output=1; next }
+    /^[^[:space:]]/ { in_output=0 }
+    in_output && /current/ {
+      for (i = 1; i <= NF; i++) {
+        if (\$i ~ /^[0-9]+x[0-9]+\$/) {
+          split(\$i, dims, "x")
+          print dims[1]
+          exit
+        }
+      }
+    }
+  '
+}
+
+start_kiosk_target() {
+  log "Layout applied successfully."
+  export WAYLAND_DISPLAY="\$TARGET_WAYLAND_DISPLAY"
+  systemctl --user import-environment WAYLAND_DISPLAY XDG_RUNTIME_DIR XDG_SESSION_TYPE XDG_CURRENT_DESKTOP GTK_THEME || true
+  systemctl --user stop kiosk.target || true
+  sleep 1
+  if systemctl --user start kiosk.target; then
+    log "Started kiosk.target."
+  else
+    log "Failed to start kiosk.target."
+    return 1
+  fi
+}
+
+init_kiosk_after_wayland_ready() {
+  log "Waiting for Wayland socket..."
+  if ! wait_for_socket "\$XDG_RUNTIME_DIR/\$TARGET_WAYLAND_DISPLAY" "\$WAIT_SECS"; then
+    log "Timed out waiting for \$XDG_RUNTIME_DIR/\$TARGET_WAYLAND_DISPLAY"
+    return 1
+  fi
+
+  local deadline=\$((SECONDS + WAIT_SECS))
+  while [ \$SECONDS -lt \$deadline ]; do
+    if wayland_query >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.1
+  done
+
+  local outs out1 out2
+  outs="\$(pick_outputs)"
+  out1="\$(echo "\$outs" | sed -n '1p')"
+  out2="\$(echo "\$outs" | sed -n '2p')"
+
+  if [ -z "\${out1:-}" ]; then
+    log "Could not find primary HDMI output via wlr-randr. Full output state:"
+    wayland_query || true
+    return 1
+  fi
+
+  if [ "\$NUM_DISPLAYS" -eq 2 ] && [ -z "\${out2:-}" ]; then
+    log "Could not find second HDMI output via wlr-randr. Full output state:"
+    wayland_query || true
+    return 1
+  fi
+
+  for _ in \$(seq 1 "\$APPLY_RETRIES"); do
+    if [ "\$FORCE_MODE" -eq 1 ]; then
+      if [ "\$NUM_DISPLAYS" -eq 2 ]; then
+        if wlr-randr --output "\$out1" --on --mode "\$MODE" --pos 0,0 \
+          && wlr-randr --output "\$out2" --on --mode "\$MODE" --pos 1920,0; then
+          start_kiosk_target
+          return \$?
+        fi
+      else
+        if wlr-randr --output "\$out1" --on --mode "\$MODE" --pos 0,0; then
+          start_kiosk_target
+          return \$?
+        fi
+      fi
+    else
+      if [ "\$NUM_DISPLAYS" -eq 2 ]; then
+        if wlr-randr --output "\$out1" --on --pos 0,0; then
+          out1_width="\$(current_output_width "\$out1")"
+          if [ -z "\$out1_width" ]; then
+            log "Could not determine current width for \$out1 after enabling it."
+          elif wlr-randr --output "\$out2" --on --pos "\${out1_width},0"; then
+            start_kiosk_target
+            return \$?
+          fi
+        fi
+      else
+        if wlr-randr --output "\$out1" --on --pos 0,0; then
+          start_kiosk_target
+          return \$?
+        fi
+      fi
+    fi
+
+    sleep "\$APPLY_RETRY_DELAY_SECS"
+  done
+
+  log "Failed to apply layout after retries. Current output state:"
+  wayland_query || true
+  return 1
+}
+
 if [ ! -d "\$XDG_RUNTIME_DIR" ] || [ ! -w "\$XDG_RUNTIME_DIR" ]; then
-  echo "session_start: XDG_RUNTIME_DIR '\$XDG_RUNTIME_DIR' is missing or not writable" >&2
+  echo "kiosk: XDG_RUNTIME_DIR '\$XDG_RUNTIME_DIR' is missing or not writable" >&2
   exit 1
 fi
 
-exec dbus-run-session -- labwc
+status_dir="\$XDG_RUNTIME_DIR/kiosk-status-\$\$"
+init_status_file="\$status_dir/init.status"
+labwc_status_file="\$status_dir/labwc.status"
+init_pid=""
+labwc_pid=""
+
+cleanup_children() {
+  [ -n "\$init_pid" ] && kill "\$init_pid" 2>/dev/null || true
+  [ -n "\$labwc_pid" ] && kill "\$labwc_pid" 2>/dev/null || true
+  [ -n "\$init_pid" ] && wait "\$init_pid" 2>/dev/null || true
+  [ -n "\$labwc_pid" ] && wait "\$labwc_pid" 2>/dev/null || true
+  pkill -TERM -x labwc 2>/dev/null || true
+  sleep 0.5
+  pkill -KILL -x labwc 2>/dev/null || true
+  rm -rf "\$status_dir"
+}
+
+trap 'cleanup_children; exit 143' HUP INT TERM
+
+mkdir -p "\$status_dir"
+
+(
+  set +e
+  init_kiosk_after_wayland_ready
+  printf '%s\n' "\$?" > "\$init_status_file"
+) &
+init_pid=\$!
+
+(
+  set +e
+  dbus-run-session -- labwc
+  printf '%s\n' "\$?" > "\$labwc_status_file"
+) &
+labwc_pid=\$!
+
+while true; do
+  if [ -f "\$init_status_file" ]; then
+    init_status="\$(cat "\$init_status_file")"
+    if [ "\$init_status" -ne 0 ]; then
+      log "Kiosk initialization failed with status \$init_status; stopping labwc."
+      kill "\$labwc_pid" 2>/dev/null || true
+      wait "\$labwc_pid" 2>/dev/null || true
+      rm -rf "\$status_dir"
+      exit "\$init_status"
+    fi
+
+    log "Kiosk initialization completed successfully."
+    if wait "\$labwc_pid"; then
+      labwc_status=0
+    else
+      labwc_status=\$?
+    fi
+    rm -rf "\$status_dir"
+    exit "\$labwc_status"
+  fi
+
+  if [ -f "\$labwc_status_file" ]; then
+    labwc_status="\$(cat "\$labwc_status_file")"
+    log "labwc exited with status \$labwc_status before kiosk initialization completed."
+    kill "\$init_pid" 2>/dev/null || true
+    wait "\$init_pid" 2>/dev/null || true
+    rm -rf "\$status_dir"
+    exit "\$labwc_status"
+  fi
+
+  sleep 0.2
+done
 EOF
-step_ok
-run_step "Setting session launcher ownership" chown "$app_user:$app_user" "/home/$app_user/kiosk/session_start.sh"
-run_step "Making session launcher executable" chmod +x "/home/$app_user/kiosk/session_start.sh"
+  step_ok
+else
+  step_error "Unable to write /home/$app_user/.local/bin/kiosk"
+fi
+run_step "Setting session launcher ownership" chown "$app_user:$app_user" "/home/$app_user/.local/bin/kiosk"
+run_step "Making session launcher executable" chmod +x "/home/$app_user/.local/bin/kiosk"
 
 # create local static app files and browser launchers
-run_step "Creating browser profile/settings directories" su "$app_user" -c "mkdir -p ~/kiosk/kiosk_browser_1/profile ~/kiosk/kiosk_browser_1/settings ~/kiosk/kiosk_browser_2/profile ~/kiosk/kiosk_browser_2/settings"
-create_kiosk_browser_index() {
+run_step "Creating browser profile/settings directories" su "$app_user" -c "mkdir -p ~/applications/kioskbrowser-1/profile ~/applications/kioskbrowser-1/settings ~/applications/kioskbrowser-2/profile ~/applications/kioskbrowser-2/settings"
+create_kioskbrowser_index() {
   local browser_num="$1"
-  local settings_dir="~/kiosk/kiosk_browser_${browser_num}/settings"
+  local settings_dir="~/applications/kioskbrowser-${browser_num}/settings"
   local tint="$2"
 
-  cat << EOF > /home/$app_user/kiosk/kiosk_browser_${browser_num}/index.html
+  cat << EOF > "/home/$app_user/applications/kioskbrowser-${browser_num}/index.html" || return 1
 <!doctype html>
 <html lang="en">
 <head>
@@ -1063,14 +1339,14 @@ create_kiosk_browser_index() {
 </html>
 EOF
 
-  chown $app_user:$app_user /home/$app_user/kiosk/kiosk_browser_${browser_num}/index.html
+  chown "$app_user:$app_user" "/home/$app_user/applications/kioskbrowser-${browser_num}/index.html"
 }
 
-create_kiosk_browser_launcher() {
+create_kioskbrowser_launcher() {
   local browser_num="$1"
   local output_name="$2"
 
-  cat << EOF > /home/$app_user/kiosk/kiosk_browser_${browser_num}/launch_kiosk_browser_${browser_num}.sh
+  cat << EOF > "/home/$app_user/applications/kioskbrowser-${browser_num}/start.sh" || return 1
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -1088,7 +1364,7 @@ else
   exit 1
 fi
 
-APP_DIR="\$HOME/kiosk/kiosk_browser_${browser_num}"
+APP_DIR="\$HOME/applications/kioskbrowser-${browser_num}"
 PROFILE_DIR="\$APP_DIR/profile"
 URL_FILE="\$APP_DIR/settings/startup_url.txt"
 DEFAULT_URL="file://\$APP_DIR/index.html"
@@ -1130,189 +1406,23 @@ exec "\$BROWSER_BIN" \
   --profile-directory="\$OUTPUT_NAME"
 EOF
 
-  chown $app_user:$app_user /home/$app_user/kiosk/kiosk_browser_${browser_num}/launch_kiosk_browser_${browser_num}.sh
-  chmod +x /home/$app_user/kiosk/kiosk_browser_${browser_num}/launch_kiosk_browser_${browser_num}.sh
+  chown "$app_user:$app_user" "/home/$app_user/applications/kioskbrowser-${browser_num}/start.sh"
+  chmod +x "/home/$app_user/applications/kioskbrowser-${browser_num}/start.sh"
 }
 
-run_step "Generating browser 1 local start page" create_kiosk_browser_index 1 250
-run_step "Generating browser 2 local start page" create_kiosk_browser_index 2 160
+run_step "Generating browser 1 local start page" create_kioskbrowser_index 1 250
+run_step "Generating browser 2 local start page" create_kioskbrowser_index 2 160
 
-run_step "Generating browser 1 launcher" create_kiosk_browser_launcher 1 "HDMI-A-1"
-run_step "Generating browser 2 launcher" create_kiosk_browser_launcher 2 "HDMI-A-2"
+run_step "Generating browser 1 launcher" create_kioskbrowser_launcher 1 "HDMI-A-1"
+run_step "Generating browser 2 launcher" create_kioskbrowser_launcher 2 "HDMI-A-2"
 
-# create wait-for-gui-ready script to ensure the compositor is ready before starting the kiosk application
-step_begin "Writing wait-for-gui-ready helper"
-cat << EOF > /usr/local/bin/wait-for-gui-ready
-#!/usr/bin/env bash
-set -euo pipefail
-export XDG_RUNTIME_DIR="/run/user/$app_uid"
-export WAYLAND_DISPLAY="wayland-0"
-
-for _ in {1..300}; do
-  [ -S "\$XDG_RUNTIME_DIR/\$WAYLAND_DISPLAY" ] && break
-  sleep 0.1
-done
-
-for _ in {1..300}; do
-  if wlr-randr >/dev/null 2>&1; then
-    exit 0
-  fi
-  sleep 0.1
-done
-
-echo "Wayland did not become ready in time" >&2
-exit 1
-EOF
-step_ok
-run_step "Making wait-for-gui-ready executable" chmod +x /usr/local/bin/wait-for-gui-ready
-
-# create kiosk-ui-init script to set up display layout after the compositor is ready
-if [ "$edid" != "none" ]; then
-  kiosk_force_mode=1
-  kiosk_mode="1920x1080"
-else
-  kiosk_force_mode=0
-  kiosk_mode=""
-fi
-kiosk_num_displays=$displays
-step_begin "Writing kiosk-ui-init helper"
-cat <<EOF | tee /usr/local/bin/kiosk-ui-init >/dev/null
-#!/usr/bin/env bash
-set -euo pipefail
-
-export HOME="/home/$app_user"
-export XDG_RUNTIME_DIR="/run/user/$app_uid"
-export WAYLAND_DISPLAY="wayland-0"
-
-FORCE_MODE="$kiosk_force_mode"
-MODE="$kiosk_mode"
-NUM_DISPLAYS="$kiosk_num_displays"
-
-WAIT_SECS=20
-APPLY_RETRIES=20
-APPLY_RETRY_DELAY_SECS=0.5
-
-log() { echo "kiosk-ui-init: \$*"; }
-
-wait_for_socket() {
-  local path="\$1" secs="\$2"
-  local deadline=\$((SECONDS + secs))
-  while [ \$SECONDS -lt \$deadline ]; do
-    [ -S "\$path" ] && return 0
-    sleep 0.1
-  done
-  return 1
-}
-
-wayland_query() {
-  wlr-randr 2>/dev/null
-}
-
-pick_outputs() {
-  local outs
-  outs="\$(wayland_query | awk '/^HDMI-A-[0-9]+ /{print \$1} /^HDMI-[0-9]+ /{print \$1}' | head -n "\$NUM_DISPLAYS")"
-  echo "\$outs"
-}
-
-start_kiosk_target() {
-  log "Layout applied successfully."
-  systemctl --user start kiosk.target
-  exit 0
-}
-
-main() {
-  log "Waiting for Wayland socket..."
-  if ! wait_for_socket "\$XDG_RUNTIME_DIR/\$WAYLAND_DISPLAY" "\$WAIT_SECS"; then
-    log "Timed out waiting for \$XDG_RUNTIME_DIR/\$WAYLAND_DISPLAY"
-    exit 1
-  fi
-
-  local deadline=\$((SECONDS + WAIT_SECS))
-  while [ \$SECONDS -lt \$deadline ]; do
-    if wayland_query >/dev/null 2>&1; then
-      break
-    fi
-    sleep 0.1
-  done
-
-  local outs out1 out2
-  outs="\$(pick_outputs)"
-  out1="\$(echo "\$outs" | sed -n '1p')"
-  out2="\$(echo "\$outs" | sed -n '2p')"
-
-  if [ -z "\${out1:-}" ]; then
-    log "Could not find primary HDMI output via wlr-randr. Full output state:"
-    wayland_query || true
-    exit 1
-  fi
-
-  if [ "\$NUM_DISPLAYS" -eq 2 ] && [ -z "\${out2:-}" ]; then
-    log "Could not find second HDMI output via wlr-randr. Full output state:"
-    wayland_query || true
-    exit 1
-  fi
-
-  for _ in \$(seq 1 "\$APPLY_RETRIES"); do
-    if [ "\$FORCE_MODE" -eq 1 ]; then
-      if [ "\$NUM_DISPLAYS" -eq 2 ]; then
-        if wlr-randr --output "\$out1" --on --mode "\$MODE" --pos 0,0 \
-          && wlr-randr --output "\$out2" --on --mode "\$MODE" --pos 1920,0; then
-          start_kiosk_target
-        fi
-      else
-        if wlr-randr --output "\$out1" --on --mode "\$MODE" --pos 0,0; then
-          start_kiosk_target
-        fi
-      fi
-    else
-      if [ "\$NUM_DISPLAYS" -eq 2 ]; then
-        if wlr-randr --output "\$out1" --on --pos 0,0 \
-          && wlr-randr --output "\$out2" --on; then
-          start_kiosk_target
-        fi
-      else
-        if wlr-randr --output "\$out1" --on --pos 0,0; then
-          start_kiosk_target
-        fi
-      fi
-    fi
-
-    sleep "\$APPLY_RETRY_DELAY_SECS"
-  done
-
-  log "Failed to apply layout after retries. Current output state:"
-  wayland_query || true
-  exit 1
-}
-
-main "\$@"
-EOF
-step_ok
-run_step "Making kiosk-ui-init executable" chmod +x /usr/local/bin/kiosk-ui-init
-session_service_env=$(cat <<EOF
-Environment=XDG_RUNTIME_DIR=/run/user/$app_uid
-Environment=XDG_SESSION_TYPE=wayland
-Environment=XDG_CURRENT_DESKTOP=labwc
-EOF
-)
-wayland_client_env=$(cat <<EOF
-Environment=XDG_RUNTIME_DIR=/run/user/$app_uid
-Environment=WAYLAND_DISPLAY=wayland-0
-Environment=XDG_SESSION_TYPE=wayland
-Environment=XDG_CURRENT_DESKTOP=labwc
-EOF
-)
-session_exec="ExecStart=/home/$app_user/kiosk/session_start.sh"
-session_ready_desc="Wayland"
-ui_init_desc="wlr-randr"
-
-# add kiosk-session.service to start the graphical session on tty1 at boot
-step_begin "Writing kiosk-session.service"
-cat << EOF > /etc/systemd/system/kiosk-session.service
+# add kiosk.service to start the graphical session on tty1 at boot
+step_begin "Writing kiosk.service"
+if cat << EOF > /etc/systemd/system/kiosk.service; then
 [Unit]
 Description=Kiosk graphical session on tty1
-After=systemd-user-sessions.service systemd-logind.service
-Wants=systemd-user-sessions.service
+After=systemd-user-sessions.service systemd-logind.service seatd.service
+Wants=systemd-user-sessions.service seatd.service
 
 [Service]
 Type=simple
@@ -1320,7 +1430,6 @@ User=$app_user
 Group=$app_user
 WorkingDirectory=/home/$app_user
 Environment=HOME=/home/$app_user
-$session_service_env
 
 TTYPath=/dev/tty1
 TTYReset=yes
@@ -1331,89 +1440,49 @@ StandardOutput=journal
 StandardError=journal
 PAMName=login
 
-$session_exec
+ExecStart=/home/$app_user/.local/bin/kiosk
+ExecStopPost=/bin/sh -c 'XDG_RUNTIME_DIR=/run/user/$app_uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$app_uid/bus systemctl --user stop kiosk.target || true; pkill -TERM -u $app_user -x labwc || true; sleep 1; pkill -KILL -u $app_user -x labwc || true'
 Restart=on-failure
 RestartSec=2
-
-[Install]
-WantedBy=multi-user.target
-EOF
-step_ok
-
-# create systemd service to wait for the compositor session to become ready
-step_begin "Writing kiosk-session-ready.service"
-cat << EOF > /etc/systemd/system/kiosk-session-ready.service
-[Unit]
-Description=Wait for kiosk $session_ready_desc session to be ready
-Requires=kiosk-session.service
-After=kiosk-session.service
-
-[Service]
-Type=oneshot
-User=$app_user
-Group=$app_user
-Environment=HOME=/home/$app_user
-$wayland_client_env
-ExecStart=/usr/local/bin/wait-for-gui-ready
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-EOF
-step_ok
-
-# create systemd service for the on-screen touch keyboard (if applicable)
-if [ -n "$touch_keyboard_package" ]; then
-  step_begin "Writing kiosk-touch-keyboard.service"
-  cat << EOF > /etc/systemd/system/kiosk-touch-keyboard.service
-[Unit]
-Description=Kiosk on-screen touch keyboard
-Requires=kiosk-ui-init.service
-After=kiosk-ui-init.service
-
-[Service]
-Type=simple
-User=$app_user
-Group=$app_user
-Environment=HOME=/home/$app_user
-Environment=GTK_THEME=Adwaita:dark
-$wayland_client_env
-ExecStart=/usr/bin/squeekboard
-Restart=on-failure
-RestartSec=2
+KillMode=control-group
+TimeoutStopSec=5
 
 [Install]
 WantedBy=multi-user.target
 EOF
   step_ok
+else
+  step_error "Unable to write /etc/systemd/system/kiosk.service"
 fi
 
-# create systemd service to set up display layout after the session is ready
-step_begin "Writing kiosk-ui-init.service"
-cat << EOF > /etc/systemd/system/kiosk-ui-init.service
+# create systemd service for the on-screen touch keyboard (if applicable)
+if [ -n "$touch_keyboard_package" ]; then
+  step_begin "Writing touchkeyboard.service"
+  if cat << EOF > "/home/$app_user/.config/systemd/user/touchkeyboard.service"; then
 [Unit]
-Description=Initialize kiosk display layout ($ui_init_desc)
-Requires=kiosk-session-ready.service
-After=kiosk-session-ready.service
+Description=Kiosk on-screen touch keyboard
+PartOf=kiosk.target
+After=kiosk.target
 
 [Service]
-Type=oneshot
-User=$app_user
-Group=$app_user
-WorkingDirectory=/home/$app_user
-Environment=HOME=/home/$app_user
-$wayland_client_env
-ExecStart=/usr/local/bin/kiosk-ui-init
-RemainAfterExit=yes
+Type=simple
+Environment=GTK_THEME=Adwaita:dark
+ExecStart=/usr/bin/squeekboard
+Restart=on-failure
+RestartSec=2
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=kiosk.target
 EOF
-step_ok
+    step_ok
+  else
+    step_error "Unable to write /home/$app_user/.config/systemd/user/touchkeyboard.service"
+  fi
+fi
 
-create_kiosk_browser_service() {
+create_kioskbrowser_service() {
   local browser_num="$1"
-  cat << EOF > /home/$app_user/.config/systemd/user/kiosk_browser_${browser_num}.service
+  cat << EOF > "/home/$app_user/.config/systemd/user/kioskbrowser-${browser_num}.service" || return 1
 [Unit]
 Description=Kiosk browser on display $browser_num
 PartOf=kiosk.target
@@ -1421,7 +1490,7 @@ After=kiosk.target
 
 [Service]
 Type=simple
-ExecStart=/home/$app_user/kiosk/kiosk_browser_${browser_num}/launch_kiosk_browser_${browser_num}.sh
+ExecStart=/home/$app_user/applications/kioskbrowser-${browser_num}/start.sh
 Restart=always
 RestartSec=2
 
@@ -1432,48 +1501,44 @@ EOF
 
 # create kiosk user target and browser services for display 1 and display 2
 step_begin "Writing kiosk.target user unit"
-cat << EOF > /home/$app_user/.config/systemd/user/kiosk.target
+if cat << EOF > "/home/$app_user/.config/systemd/user/kiosk.target"; then
 [Unit]
 Description=Kiosk User Services
 StopWhenUnneeded=no
 EOF
-step_ok
+  step_ok
+else
+  step_error "Unable to write /home/$app_user/.config/systemd/user/kiosk.target"
+fi
 run_step "Setting kiosk user systemd unit ownership" chown -R "$app_user:$app_user" "/home/$app_user/.config/systemd"
 
 # create browser services for display 1 and display 2
-run_step "Writing kiosk_browser_1.service" create_kiosk_browser_service 1
-run_step "Writing kiosk_browser_2.service" create_kiosk_browser_service 2
-run_step "Setting kiosk browser user service ownership" chown "$app_user:$app_user" "/home/$app_user/.config/systemd/user/kiosk_browser_1.service" "/home/$app_user/.config/systemd/user/kiosk_browser_2.service"
+run_step "Writing kioskbrowser-1.service" create_kioskbrowser_service 1
+run_step "Writing kioskbrowser-2.service" create_kioskbrowser_service 2
+run_step "Setting kiosk browser user service ownership" chown "$app_user:$app_user" "/home/$app_user/.config/systemd/user/kioskbrowser-1.service" "/home/$app_user/.config/systemd/user/kioskbrowser-2.service"
 
 # finish setting up systemd services and targets
 run_step "Reloading systemd daemon" systemctl daemon-reload
 run_user_systemctl "Reloading kiosk user systemd daemon" daemon-reload
-run_step "Enabling kiosk-session.service" systemctl enable kiosk-session.service
-run_step "Enabling kiosk-session-ready.service" systemctl enable kiosk-session-ready.service
-run_step "Enabling kiosk-ui-init.service" systemctl enable kiosk-ui-init.service
+run_step "Enabling kiosk.service" systemctl enable kiosk.service
 if [ -n "$touch_keyboard_package" ]; then
-  run_step "Enabling kiosk-touch-keyboard.service" systemctl enable kiosk-touch-keyboard.service
+  run_user_systemctl "Enabling touchkeyboard.service for '$app_user'" enable touchkeyboard.service
 else
-  step_begin "Disabling kiosk-touch-keyboard.service"
-  if run_quiet systemctl disable --now kiosk-touch-keyboard.service; then
-    step_ok
-  else
-    step_error_continue "kiosk-touch-keyboard.service was not present or could not be disabled"
-  fi
+  run_user_systemctl_allow_nonzero "Disabling touchkeyboard.service for '$app_user'" disable --now touchkeyboard.service
 fi
 if [ "$default_application" -eq 1 ]; then
-  run_user_systemctl "Enabling kiosk_browser_1.service for '$app_user'" enable kiosk_browser_1.service
+  run_user_systemctl "Enabling kioskbrowser-1.service for '$app_user'" enable kioskbrowser-1.service
   if [ "$displays" -eq 2 ]; then
-    run_user_systemctl "Enabling kiosk_browser_2.service for '$app_user'" enable kiosk_browser_2.service
+    run_user_systemctl "Enabling kioskbrowser-2.service for '$app_user'" enable kioskbrowser-2.service
   else
-    run_user_systemctl "Disabling kiosk_browser_2.service for '$app_user'" disable --now kiosk_browser_2.service
+    run_user_systemctl "Disabling kioskbrowser-2.service for '$app_user'" disable --now kioskbrowser-2.service
   fi
 else
-  run_user_systemctl "Disabling default kiosk browser services for '$app_user'" disable --now kiosk_browser_1.service kiosk_browser_2.service
+  run_user_systemctl "Disabling default kiosk browser services for '$app_user'" disable --now kioskbrowser-1.service kioskbrowser-2.service
 fi
 
 # remind about rpi-connect signin if applicable
-if [ $rpi_connect -eq 1 ]; then
+if [ "$rpi_connect" -eq 1 ]; then
   print_line ""
   print_line "${C_BRIGHT_WHITE}*** IMPORTANT: Raspberry Pi Connect requires a one-time sign-in to link this"
   print_line "    device to your Raspberry Pi ID.  Log in as '$app_user' and run:${C_RESET}"
@@ -1489,7 +1554,9 @@ if [ $rpi_connect -eq 1 ]; then
 fi
 
 # all done - countdown to reboot
-if [ $reboot -eq 1 ]; then
+cleanup_command_logs
+trap - EXIT
+if [ "$reboot" -eq 1 ]; then
   print_line ""
   for i in $(seq 30 -1 1) ; do echo -ne "\r${C_BRIGHT_RED}*** Rebooting in $i seconds.  (CTRL-C to cancel) ***${C_RESET}" ; sleep 1 ; done
   print_line ""
