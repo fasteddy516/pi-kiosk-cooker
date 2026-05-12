@@ -29,7 +29,7 @@ chmod +x kiosk_cooker.sh
 ## Available arguments
 `--user=<user>` sets the desired kiosk application user name.  Defaults to `kiosk`.
 
-`--password=<password>` sets the desired password for the kiosk application user.  Required argument (no default).
+`--password=<password>` sets the desired password when creating the kiosk application user.  Required only if the user does not already exist.
 
 `--displays=<1|2>` sets the number of HDMI displays to configure.  Defaults to `1`.
 
@@ -50,10 +50,7 @@ chmod +x kiosk_cooker.sh
 
 `--no-reboot` disables the automatic reboot at the end of the script.
 
-`--remember` saves all other arguments provided on this run to a `kiosk_cooker.memory` file next to the script.  On subsequent runs, those saved arguments are automatically prepended to the command line so you don't have to repeat them.  Explicitly provided arguments always override saved ones.  Delete `kiosk_cooker.memory` to clear the saved arguments.
-
-> [!WARNING]
-> Any password passed via `--password` will be stored as **plaintext** in `kiosk_cooker.memory`.  Avoid using `--remember` together with `--password` in security-sensitive environments, or delete the memory file once the password is no longer needed.
+`--remember` saves all other arguments provided on this run to a `kiosk_cooker.memory` file next to the script.  On subsequent runs, those saved arguments are automatically prepended to the command line so you don't have to repeat them.  Explicitly provided arguments always override saved ones.  `--remember` and `--password=<password>` are not saved.  Delete `kiosk_cooker.memory` to clear the saved arguments.
 
 
 ## Window Positioning

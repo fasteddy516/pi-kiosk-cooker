@@ -217,7 +217,7 @@ if [ ! -v app_user ]; then
   app_user=kiosk
 fi
 
-# application password has no default and must be provided via --password
+# application password has no default; it is required when creating app_user
 
 # set default number of displays if it hasn't been specified
 if [ ! -v displays ]; then
@@ -320,11 +320,6 @@ for arg in "$@"; do
   esac
 done
 
-# require a non-empty password to be explicitly provided
-if [ -z "${app_password:-}" ]; then
-  fail "Missing required argument: --password=<password>"
-fi
-
 if [[ ! "$app_user" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]]; then
   fail "Invalid value for --user: '$app_user' (must be a valid Linux username)"
 fi
@@ -337,12 +332,23 @@ case "$edid" in
     ;;
 esac
 
-# write remembered arguments (all args except --remember itself)
+# require a non-empty password only when creating a new user
+if ! getent passwd "$app_user" > /dev/null 2>&1 && [ -z "${app_password:-}" ]; then
+  fail "Missing required argument for new user '$app_user': --password=<password>"
+fi
+
+# write remembered arguments (all args except --remember and --password)
 if [ "$remember" -eq 1 ]; then
   step_begin "Saving remembered arguments to $memory_file"
   saved=()
   for arg in "${cli_args[@]}"; do
-    [ "$arg" != "--remember" ] && saved+=("$arg")
+    case "$arg" in
+      --remember|--password=*)
+        ;;
+      *)
+        saved+=("$arg")
+        ;;
+    esac
   done
   if printf '%s\n' "${saved[@]}" > "$memory_file"; then
     step_ok
