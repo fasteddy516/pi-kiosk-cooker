@@ -37,6 +37,7 @@ LAST_COMMAND=""
 LAST_EXIT_CODE=0
 COMMAND_STDOUT_LOG=""
 COMMAND_STDERR_LOG=""
+KEEP_COMMAND_LOGS=0
 
 print_line() {
   printf '%b\n' "$1"
@@ -48,6 +49,7 @@ init_command_logs() {
 }
 
 cleanup_command_logs() {
+  [ "$KEEP_COMMAND_LOGS" -eq 1 ] && return
   [ -n "$COMMAND_STDOUT_LOG" ] && [ -f "$COMMAND_STDOUT_LOG" ] && rm -f "$COMMAND_STDOUT_LOG"
   [ -n "$COMMAND_STDERR_LOG" ] && [ -f "$COMMAND_STDERR_LOG" ] && rm -f "$COMMAND_STDERR_LOG"
 }
@@ -136,6 +138,7 @@ step_error() {
     print_line "    ! $message"
   fi
   print_last_command_hint
+  KEEP_COMMAND_LOGS=1
   exit 1
 }
 
@@ -204,6 +207,7 @@ fi
 if ! init_command_logs; then
   fail "Unable to create temporary command log files under /tmp"
 fi
+trap cleanup_command_logs EXIT
 
 # suppress interactive prompts from apt/dpkg for the duration of this script
 export DEBIAN_FRONTEND=noninteractive
@@ -321,8 +325,20 @@ if [ -z "${app_password:-}" ]; then
   fail "Missing required argument: --password=<password>"
 fi
 
+if [[ ! "$app_user" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]]; then
+  fail "Invalid value for --user: '$app_user' (must be a valid Linux username)"
+fi
+
+case "$edid" in
+  none|1080P-2CH)
+    ;;
+  *)
+    fail "Invalid value for --edid: '$edid' (supported values: none, 1080P-2CH)"
+    ;;
+esac
+
 # write remembered arguments (all args except --remember itself)
-if [ $remember -eq 1 ]; then
+if [ "$remember" -eq 1 ]; then
   step_begin "Saving remembered arguments to $memory_file"
   saved=()
   for arg in "${cli_args[@]}"; do
@@ -368,7 +384,7 @@ if [ -z "$browser_package" ]; then
 fi
 step_ok
 
-if [ $touch_keyboard -eq 1 ]; then
+if [ "$touch_keyboard" -eq 1 ]; then
   step_begin "Checking touch keyboard package availability"
   squeekboard_version="$(apt-cache policy squeekboard 2>/dev/null | awk '/Candidate:/ {print $2; exit}')"
   if [ -n "$squeekboard_version" ] && [ "$squeekboard_version" != "(none)" ]; then
@@ -384,14 +400,14 @@ else
   step_ok
 fi
 
-kiosk_packages="labwc wlr-randr wlopm wayland-protocols xwayland dbus-user-session seatd $browser_package"
+kiosk_packages=(labwc wlr-randr wlopm wayland-protocols xwayland dbus-user-session seatd "$browser_package")
 if [ -n "$touch_keyboard_package" ]; then
-  kiosk_packages="$kiosk_packages $touch_keyboard_package"
+  kiosk_packages+=("$touch_keyboard_package")
 fi
-if [ $rpi_connect -eq 1 ]; then
-  kiosk_packages="$kiosk_packages rpi-connect"
+if [ "$rpi_connect" -eq 1 ]; then
+  kiosk_packages+=(rpi-connect)
 fi
-run_step "Installing required packages (this may take a few minutes)" apt install -y $kiosk_packages
+run_step "Installing required packages (this may take a few minutes)" apt install -y "${kiosk_packages[@]}"
 
 # remove orphaned packages
 run_step "Removing orphaned packages (this may take a few minutes)" apt autoremove -y
@@ -418,7 +434,7 @@ fi
 
 # disable overscan for active hdmi outputs
 run_step_allow_nonzero "Disabling overscan on HDMI-A-1" raspi-config nonint do_overscan_kms 1 1
-if [ $displays -eq 2 ]; then
+if [ "$displays" -eq 2 ]; then
   run_step_allow_nonzero "Disabling overscan on HDMI-A-2" raspi-config nonint do_overscan_kms 2 1
 fi
 
@@ -427,7 +443,7 @@ run_step_allow_nonzero "Disabling screen blanking" raspi-config nonint do_blanki
 
 # install edid file if specified
 if [ "$edid" != "none" ]; then
-  run_step "Installing EDID firmware file" mv "./${edid}.edid" /lib/firmware/${edid}.edid
+  run_step "Installing EDID firmware file" mv "./${edid}.edid" "/lib/firmware/${edid}.edid"
 fi
 
 # Read current cmdline configuration
@@ -581,7 +597,7 @@ if run_quiet su "$app_user" -c "gsettings set org.gnome.desktop.interface color-
 else
   step_error_continue "Could not apply GTK dark mode preference"
 fi
-if [ $rpi_connect -eq 1 ]; then
+if [ "$rpi_connect" -eq 1 ]; then
   step_begin "Enabling Raspberry Pi Connect user services (best effort)"
   if [ -f /usr/lib/systemd/user/rpi-connect.service ]; then
     systemctl --global enable rpi-connect.service >/dev/null 2>&1 || true
@@ -615,7 +631,7 @@ else
 fi
 run_step "Creating labwc config directory" su "$app_user" -c "mkdir -p ~/.config/labwc"
 step_begin "Writing labwc rc.xml"
-if cat << 'EOF' > /home/$app_user/.config/labwc/rc.xml; then
+if cat << 'EOF' > "/home/$app_user/.config/labwc/rc.xml"; then
 <?xml version="1.0"?>
 <labwc_config>
   <core>
@@ -683,7 +699,7 @@ fi
 run_step "Setting ownership for labwc config" chown "$app_user:$app_user" "/home/$app_user/.config/labwc/rc.xml"
 run_step "Creating kiosk theme directory" su "$app_user" -c "mkdir -p ~/.local/share/themes/kiosk/openbox-3"
 step_begin "Writing kiosk theme configuration"
-if cat << 'EOF' > /home/$app_user/.local/share/themes/kiosk/openbox-3/themerc; then
+if cat << 'EOF' > "/home/$app_user/.local/share/themes/kiosk/openbox-3/themerc"; then
 border.width: 0
 padding.width: 0
 padding.height: 0
@@ -695,7 +711,7 @@ else
 fi
 run_step "Setting ownership for kiosk theme files" chown -R "$app_user:$app_user" "/home/$app_user/.local/share/themes"
 step_begin "Writing labwc autostart script"
-if cat << EOF > /home/$app_user/.config/labwc/autostart; then
+if cat << EOF > "/home/$app_user/.config/labwc/autostart"; then
 #!/bin/sh
 $labwc_connect_autostart
 EOF
@@ -716,7 +732,7 @@ fi
 kiosk_num_displays=$displays
 
 step_begin "Writing kiosk session launcher"
-if cat << EOF > /home/$app_user/.local/bin/kiosk; then
+if cat << EOF > "/home/$app_user/.local/bin/kiosk"; then
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -956,7 +972,7 @@ create_kioskbrowser_index() {
   local settings_dir="~/applications/kioskbrowser-${browser_num}/settings"
   local tint="$2"
 
-  cat << EOF > /home/$app_user/applications/kioskbrowser-${browser_num}/index.html || return 1
+  cat << EOF > "/home/$app_user/applications/kioskbrowser-${browser_num}/index.html" || return 1
 <!doctype html>
 <html lang="en">
 <head>
@@ -1324,7 +1340,7 @@ create_kioskbrowser_launcher() {
   local browser_num="$1"
   local output_name="$2"
 
-  cat << EOF > /home/$app_user/applications/kioskbrowser-${browser_num}/start.sh || return 1
+  cat << EOF > "/home/$app_user/applications/kioskbrowser-${browser_num}/start.sh" || return 1
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -1436,7 +1452,7 @@ fi
 # create systemd service for the on-screen touch keyboard (if applicable)
 if [ -n "$touch_keyboard_package" ]; then
   step_begin "Writing touchkeyboard.service"
-  if cat << EOF > /home/$app_user/.config/systemd/user/touchkeyboard.service; then
+  if cat << EOF > "/home/$app_user/.config/systemd/user/touchkeyboard.service"; then
 [Unit]
 Description=Kiosk on-screen touch keyboard
 PartOf=kiosk.target
@@ -1460,7 +1476,7 @@ fi
 
 create_kioskbrowser_service() {
   local browser_num="$1"
-  cat << EOF > /home/$app_user/.config/systemd/user/kioskbrowser-${browser_num}.service || return 1
+  cat << EOF > "/home/$app_user/.config/systemd/user/kioskbrowser-${browser_num}.service" || return 1
 [Unit]
 Description=Kiosk browser on display $browser_num
 PartOf=kiosk.target
@@ -1479,7 +1495,7 @@ EOF
 
 # create kiosk user target and browser services for display 1 and display 2
 step_begin "Writing kiosk.target user unit"
-if cat << EOF > /home/$app_user/.config/systemd/user/kiosk.target; then
+if cat << EOF > "/home/$app_user/.config/systemd/user/kiosk.target"; then
 [Unit]
 Description=Kiosk User Services
 StopWhenUnneeded=no
@@ -1516,7 +1532,7 @@ else
 fi
 
 # remind about rpi-connect signin if applicable
-if [ $rpi_connect -eq 1 ]; then
+if [ "$rpi_connect" -eq 1 ]; then
   print_line ""
   print_line "${C_BRIGHT_WHITE}*** IMPORTANT: Raspberry Pi Connect requires a one-time sign-in to link this"
   print_line "    device to your Raspberry Pi ID.  Log in as '$app_user' and run:${C_RESET}"
@@ -1533,7 +1549,8 @@ fi
 
 # all done - countdown to reboot
 cleanup_command_logs
-if [ $reboot -eq 1 ]; then
+trap - EXIT
+if [ "$reboot" -eq 1 ]; then
   print_line ""
   for i in $(seq 30 -1 1) ; do echo -ne "\r${C_BRIGHT_RED}*** Rebooting in $i seconds.  (CTRL-C to cancel) ***${C_RESET}" ; sleep 1 ; done
   print_line ""
