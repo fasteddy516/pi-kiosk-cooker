@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # kiosk_cooker version (used by script and generated UI text)
-SCRIPT_VERSION="1.1.0"
+SCRIPT_VERSION="1.2.0"
 
 supports_color=0
 if [ -t 1 ] && [ -n "${TERM:-}" ] && [ "${TERM}" != "dumb" ]; then
