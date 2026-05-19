@@ -197,6 +197,30 @@ run_user_systemctl_allow_nonzero() {
     systemctl --user "$@"
 }
 
+run_systemctl_for_user_allow_nonzero() {
+  local text="$1"
+  local target_user="$2"
+  local target_uid="$3"
+  shift 3
+
+  run_step_allow_nonzero "$text" runuser -u "$target_user" -- env \
+    "XDG_RUNTIME_DIR=/run/user/$target_uid" \
+    "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$target_uid/bus" \
+    systemctl --user "$@"
+}
+
+run_rpi_connect_for_user_allow_nonzero() {
+  local text="$1"
+  local target_user="$2"
+  local target_uid="$3"
+  shift 3
+
+  run_step_allow_nonzero "$text" runuser -u "$target_user" -- env \
+    "XDG_RUNTIME_DIR=/run/user/$target_uid" \
+    "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$target_uid/bus" \
+    rpi-connect "$@"
+}
+
 print_line "${C_RED}🔥${C_RESET}${C_LIGHT_BLUE} pi-kiosk-cooker ${SCRIPT_VERSION} by fasteddy516${C_RESET}"
 
 # ensure the script is being run as root
@@ -604,19 +628,22 @@ else
   step_error_continue "Could not apply GTK dark mode preference"
 fi
 if [ "$rpi_connect" -eq 1 ]; then
-  step_begin "Enabling Raspberry Pi Connect user services (best effort)"
-  if [ -f /usr/lib/systemd/user/rpi-connect.service ]; then
-    systemctl --global enable rpi-connect.service >/dev/null 2>&1 || true
+  rpi_connect_units=(rpi-connect.service rpi-connect-wayvnc.service rpi-connect-signin.path)
+  invoking_user="${SUDO_USER:-$(id -un)}"
+
+  run_step_allow_nonzero "Disabling global Raspberry Pi Connect user units" systemctl --global disable "${rpi_connect_units[@]}"
+
+  if [ "$invoking_user" != "$app_user" ] && getent passwd "$invoking_user" >/dev/null 2>&1; then
+    invoking_uid="$(id -u "$invoking_user")"
+    run_step_allow_nonzero "Starting user manager for invoking user '$invoking_user'" systemctl start "user@$invoking_uid.service"
+    run_systemctl_for_user_allow_nonzero "Disabling Raspberry Pi Connect for invoking user '$invoking_user'" "$invoking_user" "$invoking_uid" disable --now "${rpi_connect_units[@]}"
+    run_rpi_connect_for_user_allow_nonzero "Signing out Raspberry Pi Connect for invoking user '$invoking_user'" "$invoking_user" "$invoking_uid" signout
+    run_rpi_connect_for_user_allow_nonzero "Turning off Raspberry Pi Connect for invoking user '$invoking_user'" "$invoking_user" "$invoking_uid" off
   fi
-  if [ -f /usr/lib/systemd/user/rpi-connect-wayvnc.service ]; then
-    systemctl --global enable rpi-connect-wayvnc.service >/dev/null 2>&1 || true
-  fi
-  if [ -f /usr/lib/systemd/user/rpi-connect-signin.path ]; then
-    systemctl --global enable rpi-connect-signin.path >/dev/null 2>&1 || true
-  fi
-  su "$app_user" -c "XDG_RUNTIME_DIR=/run/user/$app_uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$app_uid/bus systemctl --user start rpi-connect.service rpi-connect-wayvnc.service rpi-connect-signin.path" >/dev/null 2>&1 || true
-  step_ok
-  print_line "    ${C_YELLOW}! note: Raspberry Pi Connect service setup is best effort; missing units or start failures are ignored${C_RESET}"
+
+  run_systemctl_for_user_allow_nonzero "Enabling Raspberry Pi Connect for '$app_user'" "$app_user" "$app_uid" enable --now "${rpi_connect_units[@]}"
+  run_rpi_connect_for_user_allow_nonzero "Turning on Raspberry Pi Connect for '$app_user'" "$app_user" "$app_uid" on
+  print_line "    ${C_YELLOW}! note: Raspberry Pi Connect service setup is best effort; missing units or command failures are ignored${C_RESET}"
   labwc_connect_autostart=$(cat <<'EOF'
 
 # Keep user systemd/dbus environment aligned with this Wayland session.
@@ -628,11 +655,9 @@ systemctl --user restart rpi-connect-wayvnc.service >/dev/null 2>&1 || true
 EOF
 )
 else
-  step_begin "Disabling Raspberry Pi Connect user services"
-  systemctl --global disable rpi-connect.service >/dev/null 2>&1 || true
-  systemctl --global disable rpi-connect-wayvnc.service >/dev/null 2>&1 || true
-  systemctl --global disable rpi-connect-signin.path >/dev/null 2>&1 || true
-  step_ok
+  rpi_connect_units=(rpi-connect.service rpi-connect-wayvnc.service rpi-connect-signin.path)
+  run_step_allow_nonzero "Disabling global Raspberry Pi Connect user units" systemctl --global disable "${rpi_connect_units[@]}"
+  run_user_systemctl_allow_nonzero "Disabling Raspberry Pi Connect for '$app_user'" disable --now "${rpi_connect_units[@]}"
   labwc_connect_autostart=""
 fi
 run_step "Creating labwc config directory" su "$app_user" -c "mkdir -p ~/.config/labwc"
