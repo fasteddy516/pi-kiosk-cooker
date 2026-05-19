@@ -1576,6 +1576,12 @@ if [ "$rpi_connect" -eq 1 ]; then
   print_line "       sudo -u $app_user XDG_RUNTIME_DIR=/run/user/$app_uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$app_uid/bus rpi-connect signin${C_RESET}"
   print_line ""
   print_line "${C_BRIGHT_WHITE}    Visit the URL it displays to authorize this device.${C_RESET}"
+  print_line ""
+  print_line "${C_BRIGHT_WHITE}    To choose which display Raspberry Pi Connect shares, run:${C_RESET}"
+  print_line ""
+  print_line "${C_WHITE}       wayvncctl --socket=/run/user/$app_uid/rpi-connect-wayvnc-ctl.sock output-set HDMI-A-1${C_RESET}"
+  print_line ""
+  print_line "${C_BRIGHT_WHITE}    The output can be set to HDMI-A-1 or HDMI-A-2. This setting is not persistent.${C_RESET}"
 fi
 
 # all done - countdown to reboot
