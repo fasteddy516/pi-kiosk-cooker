@@ -85,6 +85,9 @@ The script sets `DEBIAN_FRONTEND=noninteractive` for the duration of its executi
 | `squeekboard` _(when available and not disabled)_ | Wayland on-screen keyboard. Installed and managed as a dedicated user-level systemd service (`touchkeyboard.service`) so it can be enabled/disabled independently of the compositor and browser services. |
 | `rpi-connect` _(optional)_ | Full Raspberry Pi Connect package (not lite), required for screen sharing support. Installed by default; skipped when `--no-rpi-connect` is passed. |
 
+### Chromium policy
+The script writes `/etc/chromium/policies/managed/kiosk.json` with `DeveloperToolsAvailability` set to `2`, which disables Chromium Developer Tools for the kiosk browsers.
+
 ### Boot configuration (`/boot/firmware/cmdline.txt`)
 The kernel command line is modified idempotently — existing tokens managed by this script are removed before the desired set is appended, so re-running the script never duplicates entries. As part of this cleanup, any existing `quiet` and `console=tty<n>` tokens are removed. Existing `video=` tokens are only removed when one or more `--video` arguments are specified; otherwise they are preserved.
 

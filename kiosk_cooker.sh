@@ -442,6 +442,19 @@ run_step "Installing required packages (this may take a few minutes)" apt instal
 # remove orphaned packages
 run_step "Removing orphaned packages (this may take a few minutes)" apt autoremove -y
 
+# configure Chromium managed policies
+run_step "Creating Chromium policy directory" mkdir -p /etc/chromium/policies/managed
+step_begin "Writing Chromium kiosk policy"
+if cat << 'EOF' > /etc/chromium/policies/managed/kiosk.json; then
+{
+  "DeveloperToolsAvailability": 2
+}
+EOF
+  step_ok
+else
+  step_error "Unable to write /etc/chromium/policies/managed/kiosk.json"
+fi
+
 # disable splash screen (1 = disabled)
 run_step_allow_nonzero "Disabling boot splash" raspi-config nonint do_boot_splash 1
 
