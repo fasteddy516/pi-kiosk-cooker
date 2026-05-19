@@ -678,6 +678,16 @@ step_begin "Writing labwc rc.xml"
 if cat << 'EOF' > "/home/$app_user/.config/labwc/rc.xml"; then
 <?xml version="1.0"?>
 <labwc_config>
+
+  <!-- Planar PCT2235 -->
+  <touch deviceName="USBest Technology SiS HID Touch Controller" mapToOutput="HDMI-A-1" mouseEmulation="yes" />
+  
+  <!-- Argon40 Industria HMI 10CS -->
+  <touch deviceName="wch.cn USB2IIC_CTP_CONTROL" mapToOutput="HDMI-A-1" mouseEmulation="yes" />
+  
+  <!-- Howens CX101PI-C/D -->
+  <touch deviceName="TSTP MTouch" mapToOutput="HDMI-A-1" mouseEmulation="yes" />
+  
   <core>
     <!-- Prefer client-side decorations so Chromium negotiates via xdg-decoration. -->
     <decoration>client</decoration>
