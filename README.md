@@ -64,6 +64,33 @@ This kiosk environment uses compositor rules (labwc `WindowRules` inside `~/.con
 
 The full screen browser demo applications included in this script have identifiers that contain `HDMI-A-1-Maximized` and `HDMI-A-2-Maximized` to ensure they get routed to the correct output and take up all of the available screen real estate.  
 
+## Touchscreen Assignment
+The generated labwc configuration also maps several known touchscreen controllers to `HDMI-A-1` automatically:
+
+- Planar PCT2235: `USBest Technology SiS HID Touch Controller`
+- Argon40 Industria HMI 10CS: `wch.cn USB2IIC_CTP_CONTROL`
+- Howens CX101PI-C/D: `TSTP MTouch`
+
+These mappings live in `/home/<app_user>/.config/labwc/rc.xml` as `<touch>` entries near the top of the file. To assign one of these touchscreens to the second display instead, change its `mapToOutput` value from `HDMI-A-1` to `HDMI-A-2`, then restart the kiosk session or reboot:
+
+```xml
+<touch deviceName="TSTP MTouch" mapToOutput="HDMI-A-2" mouseEmulation="yes" />
+```
+
+To add another touchscreen model, first find the touch controller name:
+
+```bash
+cat /proc/bus/input/devices
+```
+
+Look for the touchscreen device block and copy the value from its `N: Name="..."` line, without the surrounding quotes. Then add another entry to `rc.xml` using that exact name:
+
+```xml
+<touch deviceName="Your Touch Controller Name" mapToOutput="HDMI-A-1" mouseEmulation="yes" />
+```
+
+Choose `HDMI-A-1` or `HDMI-A-2` according to the physical display the touchscreen should control. If you rerun `kiosk_cooker.sh`, it regenerates `rc.xml`, so custom touchscreen entries should also be added to the script if you want them preserved across future runs.
+
 
 ## Under the hood
 
@@ -134,7 +161,7 @@ The launcher also starts an initialization task alongside `labwc`. That task wai
 - Disable now and on boot: `systemctl --user disable --now touchkeyboard.service`
 - Enable now and on boot: `systemctl --user enable --now touchkeyboard.service`
 
-**`labwc/rc.xml`** is generated with three layers of compositor decoration suppression. `<core><decoration>client</decoration>` instructs labwc to prefer client-side decorations (CSD) globally, meaning windows negotiate their own frame via the `xdg-decoration` protocol rather than having the compositor draw a title bar. Chromium, when launched with `WaylandWindowDecorations` in `--enable-features`, requests CSD and suppresses its own title bar when maximized. A `<windowRule identifier="*" serverDecoration="no"/>` rule acts as a belt-and-suspenders fallback in case CSD negotiation fails for any window. Finally, a custom zero-pixel `kiosk` theme (`border.width: 0`, `titlebar.height: 0`) is installed under `~/.local/share/themes/kiosk/openbox-3/themerc` and referenced via `<theme><name>kiosk</name></theme>` — if server-side decorations are ever applied despite the above, they render invisibly.
+**`labwc/rc.xml`** is generated with touchscreen output mappings for known controllers, plus three layers of compositor decoration suppression. `<core><decoration>client</decoration>` instructs labwc to prefer client-side decorations (CSD) globally, meaning windows negotiate their own frame via the `xdg-decoration` protocol rather than having the compositor draw a title bar. Chromium, when launched with `WaylandWindowDecorations` in `--enable-features`, requests CSD and suppresses its own title bar when maximized. A `<windowRule identifier="*" serverDecoration="no"/>` rule acts as a belt-and-suspenders fallback in case CSD negotiation fails for any window. Finally, a custom zero-pixel `kiosk` theme (`border.width: 0`, `titlebar.height: 0`) is installed under `~/.local/share/themes/kiosk/openbox-3/themerc` and referenced via `<theme><name>kiosk</name></theme>` — if server-side decorations are ever applied despite the above, they render invisibly.
 
 ### Browser kiosk service (`kioskbrowser-1.service`)
 After the graphical session and display layout are ready, `kioskbrowser-1.service` starts a fullscreen Chromium kiosk instance for display 1 and is configured with `Restart=always` so it automatically respawns if it exits or crashes. This is a user-level systemd service installed at `/home/<app_user>/.config/systemd/user/kioskbrowser-1.service` and enabled under `kiosk.target`.
