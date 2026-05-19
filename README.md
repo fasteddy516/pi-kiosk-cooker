@@ -108,6 +108,7 @@ The script sets `DEBIAN_FRONTEND=noninteractive` for the duration of its executi
 | `xwayland` | Compatibility layer so X11 applications can run inside the Wayland session. |
 | `dbus-user-session` | Provides a per-user D-Bus session bus, required by Wayland and labwc. |
 | `seatd` | A seat management daemon that grants unprivileged users access to input and display hardware without requiring root. |
+| `ddcutil` | Command-line tool for DDC/CI display management, such as querying and changing monitor settings. |
 | `chromium-browser` / `chromium` | Chromium-based browser used for fullscreen kiosk operation. The script installs whichever package is available on the target OS. |
 | `squeekboard` _(when available and not disabled)_ | Wayland on-screen keyboard. Installed and managed as a dedicated user-level systemd service (`touchkeyboard.service`) so it can be enabled/disabled independently of the compositor and browser services. |
 | `rpi-connect` _(optional)_ | Full Raspberry Pi Connect package (not lite), required for screen sharing support. Installed by default; skipped when `--no-rpi-connect` is passed. |
@@ -130,11 +131,12 @@ The kernel command line is modified idempotently — existing tokens managed by 
 | `vc4.force_hotplug=0x01` / `0x03` _(optional)_ | Forces the VC4 GPU driver to treat the specified HDMI output(s) as always-connected, even when no display is detected. Without this, outputs with overridden EDID may still be disabled if the HPD (hot-plug detect) pin reads as disconnected. `0x01` enables it for HDMI-1; `0x03` for both. |
 
 ### `raspi-config` settings
-Three display-related settings are applied via `raspi-config`'s non-interactive interface:
+Four display-related settings are applied via `raspi-config`'s non-interactive interface:
 
 - **Plymouth splash disabled** — The standard Plymouth splash is disabled.
 - **Overscan/underscan disabled** (both HDMI outputs) — Disables the legacy overscan compensation that adds black borders around the image, which is unnecessary on modern displays.
 - **Screen blanking disabled** — Prevents the display from going blank after a period of inactivity, which is undesirable for a kiosk.
+- **I2C enabled** — Enables the Raspberry Pi I2C bus so `ddcutil` can use DDC/CI for display management.
 
 In addition, the script directly enforces `disable_splash=1` in `/boot/firmware/config.txt` to disable the early firmware Raspberry logo splash reliably across Raspberry Pi OS variants.
 

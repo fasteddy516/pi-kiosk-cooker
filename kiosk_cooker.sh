@@ -430,7 +430,7 @@ else
   step_ok
 fi
 
-kiosk_packages=(labwc wlr-randr wlopm wayland-protocols xwayland dbus-user-session seatd "$browser_package")
+kiosk_packages=(labwc wlr-randr wlopm wayland-protocols xwayland dbus-user-session seatd ddcutil "$browser_package")
 if [ -n "$touch_keyboard_package" ]; then
   kiosk_packages+=("$touch_keyboard_package")
 fi
@@ -483,6 +483,9 @@ fi
 
 # disable screen blanking
 run_step_allow_nonzero "Disabling screen blanking" raspi-config nonint do_blanking 1
+
+# enable I2C for DDC display management
+run_step_allow_nonzero "Enabling I2C bus for DDC display management" raspi-config nonint do_i2c 0
 
 # install edid file if specified
 if [ "$edid" != "none" ]; then
