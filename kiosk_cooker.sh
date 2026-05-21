@@ -221,6 +221,65 @@ run_rpi_connect_for_user_allow_nonzero() {
     rpi-connect "$@"
 }
 
+configure_wireless_overlays() {
+  local config_file="/boot/firmware/config.txt"
+  local temp_file
+
+  temp_file="$(mktemp)" || return 1
+
+  awk -v disable_all_wireless="$disable_all_wireless" '
+    BEGIN {
+      in_all = 0
+      all_seen = 0
+      overlays_added = 0
+    }
+
+    function add_wireless_overlays() {
+      if (disable_all_wireless == "1" && overlays_added == 0) {
+        print "dtoverlay=disable-wifi"
+        print "dtoverlay=disable-bt"
+        overlays_added = 1
+      }
+    }
+
+    /^[[:space:]]*\[[^]]+\][[:space:]]*$/ {
+      if (in_all) {
+        add_wireless_overlays()
+      }
+
+      in_all = ($0 ~ /^[[:space:]]*\[all\][[:space:]]*$/)
+      if (in_all) {
+        all_seen = 1
+      }
+
+      print
+      next
+    }
+
+    in_all && /^[[:space:]]*dtoverlay[[:space:]]*=[[:space:]]*disable-(wifi|bt)[[:space:]]*$/ {
+      next
+    }
+
+    {
+      print
+    }
+
+    END {
+      if (in_all) {
+        add_wireless_overlays()
+      } else if (all_seen == 0 && disable_all_wireless == "1") {
+        print ""
+        print "[all]"
+        add_wireless_overlays()
+      }
+    }
+  ' "$config_file" > "$temp_file" && cat "$temp_file" > "$config_file"
+  local status=$?
+
+  rm -f "$temp_file"
+  return "$status"
+}
+
 print_line "${C_RED}🔥${C_RESET}${C_LIGHT_BLUE} pi-kiosk-cooker ${SCRIPT_VERSION} by fasteddy516${C_RESET}"
 
 # ensure the script is being run as root
@@ -271,6 +330,11 @@ fi
 # set default Raspberry Pi Connect install state if it hasn't been specified
 if [ ! -v rpi_connect ]; then
   rpi_connect=1
+fi
+
+# set default wireless hardware/service state if it hasn't been specified
+if [ ! -v disable_all_wireless ]; then
+  disable_all_wireless=0
 fi
 
 # set default application service state if it hasn't been specified
@@ -328,6 +392,9 @@ for arg in "$@"; do
       ;;
     --no-rpi-connect)
       rpi_connect=0
+      ;;
+    --disable-all-wireless)
+      disable_all_wireless=1
       ;;
     --no-default-application)
       default_application=0
@@ -475,6 +542,13 @@ else
   fi
 fi
 
+# configure Raspberry Pi wireless overlays in the [all] section
+if [ "$disable_all_wireless" -eq 1 ]; then
+  run_step "Disabling Wi-Fi/Bluetooth firmware overlays" configure_wireless_overlays
+else
+  run_step "Enabling Wi-Fi/Bluetooth firmware overlays" configure_wireless_overlays
+fi
+
 # disable overscan for active hdmi outputs
 run_step_allow_nonzero "Disabling overscan on HDMI-A-1" raspi-config nonint do_overscan_kms 1 1
 if [ "$displays" -eq 2 ]; then
@@ -592,6 +666,13 @@ app_uid=$(id -u "$app_user")
 
 # enable seatd for Wayland compositor seat management
 run_step "Enabling seatd service" systemctl enable seatd
+
+# manage wireless services on a best-effort basis
+if [ "$disable_all_wireless" -eq 1 ]; then
+  run_step_allow_nonzero "Disabling wireless services" systemctl disable --now bluetooth.service wpa_supplicant.service
+else
+  run_step_allow_nonzero "Enabling wireless services" systemctl enable --now bluetooth.service wpa_supplicant.service
+fi
 
 # fully disable getty on tty1 to prevent any console login prompt from returning
 run_step "Stopping/disabling getty on tty1" systemctl disable --now getty@tty1.service
