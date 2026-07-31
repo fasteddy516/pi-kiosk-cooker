@@ -1123,14 +1123,14 @@ fi
 labwc_display_2_rules=""
 if [ "\$displays" = "2" ]; then
   labwc_display_2_rules="
-    <!-- Move to output \$display_2_output based on app_id -->
-    <windowRule identifier=\"*\$display_2_output*\">
+    <!-- Move kiosk display 2 windows to the configured output -->
+    <windowRule identifier=\"*KIOSK-D-2*\">
       <action name=\"MoveToOutput\" output=\"\$display_2_output\" />
       <skipWindowSwitcher>yes</skipWindowSwitcher>
     </windowRule>
 
-    <!-- Move to output \$display_2_output based on window title -->
-    <windowRule title=\"*\$display_2_output*\">
+    <!-- Move kiosk display 2 windows to the configured output by title -->
+    <windowRule title=\"*KIOSK-D-2*\">
       <action name=\"MoveToOutput\" output=\"\$display_2_output\" />
       <skipWindowSwitcher>yes</skipWindowSwitcher>
     </windowRule>"
@@ -1162,14 +1162,14 @@ cat > "\$RC_FILE" << XML
     <!-- Belt-and-suspenders: disable SSD for every window regardless of app_id. -->
     <windowRule identifier="*" serverDecoration="no" />
 
-    <!-- Move to output \$display_1_output based on app_id -->
-    <windowRule identifier="*\$display_1_output*">
+    <!-- Move kiosk display 1 windows to the configured output -->
+    <windowRule identifier=\"*KIOSK-D-1*\">
       <action name="MoveToOutput" output="\$display_1_output" />
       <skipWindowSwitcher>yes</skipWindowSwitcher>
     </windowRule>
 
-    <!-- Move to output \$display_1_output based on window title -->
-    <windowRule title="*\$display_1_output*">
+    <!-- Move kiosk display 1 windows to the configured output by title -->
+    <windowRule title=\"*KIOSK-D-1*\">
       <action name="MoveToOutput" output="\$display_1_output" />
       <skipWindowSwitcher>yes</skipWindowSwitcher>
     </windowRule>
@@ -1569,7 +1569,7 @@ create_kioskbrowser_index() {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Kiosk Browser ${browser_num}</title>
+  <title>KIOSK-D-${browser_num}</title>
 
   <style>
     :root {
@@ -1929,7 +1929,6 @@ EOF
 
 create_kioskbrowser_launcher() {
   local browser_num="$1"
-  local output_name="$2"
 
   cat << EOF > "/home/$app_user/applications/kioskbrowser-${browser_num}/start.sh" || return 1
 #!/usr/bin/env bash
@@ -1954,27 +1953,7 @@ PROFILE_DIR="\$APP_DIR/profile"
 URL_FILE="\$APP_DIR/settings/startup_url.txt"
 DEFAULT_URL="file://\$APP_DIR/index.html"
 START_URL="\$DEFAULT_URL"
-DISPLAY_SLOT="${browser_num}"
-DEFAULT_OUTPUT_NAME="${output_name}"
-DISPLAY_MAP_ENV="\$HOME/.config/kiosk/display-map.env"
-
-if [ -f "\$DISPLAY_MAP_ENV" ]; then
-  # shellcheck disable=SC1090
-  . "\$DISPLAY_MAP_ENV"
-fi
-
-resolved_output="\$DEFAULT_OUTPUT_NAME"
-if [ "\$DISPLAY_SLOT" = "1" ] && [ -n "\${KIOSK_DISPLAY_1_OUTPUT:-}" ]; then
-  resolved_output="\$KIOSK_DISPLAY_1_OUTPUT"
-fi
-if [ "\$DISPLAY_SLOT" = "2" ]; then
-  if [ "\${KIOSK_NUM_DISPLAYS:-2}" = "2" ] && [ -n "\${KIOSK_DISPLAY_2_OUTPUT:-}" ]; then
-    resolved_output="\$KIOSK_DISPLAY_2_OUTPUT"
-  elif [ -n "\${KIOSK_DISPLAY_1_OUTPUT:-}" ]; then
-    resolved_output="\$KIOSK_DISPLAY_1_OUTPUT"
-  fi
-fi
-OUTPUT_NAME="\${resolved_output}-Maximized"
+OUTPUT_NAME="KIOSK-D-${browser_num}"
 
 if [ -f "\$URL_FILE" ]; then
   raw_url="\$(head -n 1 "\$URL_FILE" | tr -d '\r')"
@@ -2018,8 +1997,8 @@ EOF
 run_step "Generating browser 1 local start page" create_kioskbrowser_index 1 250
 run_step "Generating browser 2 local start page" create_kioskbrowser_index 2 160
 
-run_step "Generating browser 1 launcher" create_kioskbrowser_launcher 1 "$display_1_output"
-run_step "Generating browser 2 launcher" create_kioskbrowser_launcher 2 "$display_2_output"
+run_step "Generating browser 1 launcher" create_kioskbrowser_launcher 1
+run_step "Generating browser 2 launcher" create_kioskbrowser_launcher 2
 
 # add kiosk.service to start the graphical session on tty1 at boot
 step_begin "Writing kiosk.service"

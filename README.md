@@ -66,9 +66,9 @@ chmod +x kiosk_cooker.sh
 ## Window Positioning
 This kiosk environment uses compositor rules (labwc `WindowRules` inside `~/.config/labwc/rc.xml`) together with the runtime-generated display map to control application window placement.
 
-At startup, the kiosk sync helper resolves `display-map.conf` into `display-map.env` and regenerates `rc.xml` with the active output names. The labwc rules then move windows whose `app_id` or title contains the resolved display name to that output, and any window whose identifier or title contains `Maximized` is maximized on whichever display it lands on.
+At startup, the kiosk sync helper resolves `display-map.conf` into `display-map.env` and regenerates `rc.xml` with the active physical output names. The browser applications never need to know those connector names. Instead, they identify themselves as `KIOSK-D-1` and `KIOSK-D-2`, and the generated labwc rules move those logical windows to the mapped output and maximize them.
 
-The full screen browser demo applications included in this script use the runtime-resolved display name plus `Maximized` in their profile/window identifiers so labwc can route them to the correct output and let them occupy the full screen.
+The full screen browser demo applications included in this script use the logical `KIOSK-D-n` identifiers in their profile and page title so labwc can route them to the correct output and let them occupy the full screen.
 
 ## Touchscreen Assignment
 The generated labwc configuration also maps several known touchscreen controllers to `HDMI-A-1` automatically:
@@ -102,7 +102,7 @@ Choose `HDMI-A-1` or `HDMI-A-2` according to the physical display the touchscree
 The script now treats the display mapping as a small two-file workflow:
 
 - `display-map.conf` is the editable source of truth under `/home/<app_user>/.config/kiosk/`. Change this file when you want to update which physical outputs or touch devices belong to each logical display.
-- `display-map.env` is generated from `display-map.conf` at runtime. The kiosk launcher and browser start scripts read this file, so it should be treated as derived output rather than something to edit by hand.
+- `display-map.env` is generated from `display-map.conf` at runtime. The kiosk launcher reads this file so it can apply the configured output layout, and it should be treated as derived output rather than something to edit by hand.
 
 To apply a mapping change, edit `display-map.conf` and then reboot or restart `kiosk.service` so the runtime helper regenerates `display-map.env` and `~/.config/labwc/rc.xml` from the updated config.
 
@@ -188,12 +188,12 @@ The launcher also starts an initialization task alongside `labwc`. That task wai
 
 **`labwc/rc.xml`** is generated with touchscreen output mappings for known controllers, plus three layers of compositor decoration suppression. `<core><decoration>client</decoration>` instructs labwc to prefer client-side decorations (CSD) globally, meaning windows negotiate their own frame via the `xdg-decoration` protocol rather than having the compositor draw a title bar. Chromium, when launched with `WaylandWindowDecorations` in `--enable-features`, requests CSD and suppresses its own title bar when maximized. A `<windowRule identifier="*" serverDecoration="no"/>` rule acts as a belt-and-suspenders fallback in case CSD negotiation fails for any window. Finally, a custom zero-pixel `kiosk` theme (`border.width: 0`, `titlebar.height: 0`) is installed under `~/.local/share/themes/kiosk/openbox-3/themerc` and referenced via `<theme><name>kiosk</name></theme>` — if server-side decorations are ever applied despite the above, they render invisibly.
 
-**`display-map.conf`** is the persistent runtime mapping config that the helper reads on startup. **`display-map.env`** is the helper's generated export file, containing the resolved logical-display values that the session launcher and browser start scripts consume. If you need to change display placement or touch assignment, edit `display-map.conf`, then reboot or restart `kiosk.service` so the derived files are refreshed.
+**`display-map.conf`** is the persistent runtime mapping config that the helper reads on startup. **`display-map.env`** is the helper's generated export file, containing the resolved logical-display values that the session launcher consumes. The browser start scripts use the logical `KIOSK-D-n` identifiers directly and do not need the physical connector mapping. If you need to change display placement or touch assignment, edit `display-map.conf`, then reboot or restart `kiosk.service` so the derived files are refreshed.
 
 ### Browser kiosk service (`kioskbrowser-1.service`)
 After the graphical session and display layout are ready, `kioskbrowser-1.service` starts a fullscreen Chromium kiosk instance for display 1 and is configured with `Restart=always` so it automatically respawns if it exits or crashes. This is a user-level systemd service installed at `/home/<app_user>/.config/systemd/user/kioskbrowser-1.service` and enabled under `kiosk.target`.
 
-The service runs `/home/<app_user>/applications/kioskbrowser-1/start.sh`, which launches Chromium in app mode (`--app`) with startup prompts and browser chrome disabled. App mode is used instead of `--kiosk`/`--start-fullscreen` because Chromium's true kiosk mode uses exclusive Wayland fullscreen, which prevents compositor layer-shell surfaces (such as `squeekboard`) from rendering above the browser window — meaning the on-screen keyboard would always appear behind it. The launcher uses display/maximize hints in the Chromium profile name so labwc window rules can move the window to `HDMI-A-1` and maximize it without claiming exclusive fullscreen. It also enables Wayland IME support (`--enable-wayland-ime`), enables Chromium virtual keyboard and CSD features (`--enable-features=...,VirtualKeyboard,WaylandWindowDecorations`, `--enable-virtual-keyboard`), and forces touch input mode (`--touch-events=enabled`). `WaylandWindowDecorations` is critical: it causes Chromium to negotiate client-side decorations with labwc via the `xdg-decoration` protocol, and when maximized Chromium suppresses its own title bar — keeping the window borderless without relying on compositor-drawn decorations.
+The service runs `/home/<app_user>/applications/kioskbrowser-1/start.sh`, which launches Chromium in app mode (`--app`) with startup prompts and browser chrome disabled. App mode is used instead of `--kiosk`/`--start-fullscreen` because Chromium's true kiosk mode uses exclusive Wayland fullscreen, which prevents compositor layer-shell surfaces (such as `squeekboard`) from rendering above the browser window — meaning the on-screen keyboard would always appear behind it. The launcher uses the logical `KIOSK-D-1` identifier in the Chromium profile name and page title so labwc window rules can move the window to the configured output and maximize it without claiming exclusive fullscreen. It also enables Wayland IME support (`--enable-wayland-ime`), enables Chromium virtual keyboard and CSD features (`--enable-features=...,VirtualKeyboard,WaylandWindowDecorations`, `--enable-virtual-keyboard`), and forces touch input mode (`--touch-events=enabled`). `WaylandWindowDecorations` is critical: it causes Chromium to negotiate client-side decorations with labwc via the `xdg-decoration` protocol, and when maximized Chromium suppresses its own title bar — keeping the window borderless without relying on compositor-drawn decorations.
 
 Initial startup content is a local static page at `/home/<app_user>/applications/kioskbrowser-1/index.html`.
 
@@ -210,7 +210,7 @@ The script also creates a parallel display 2 browser setup:
 - `/home/<app_user>/applications/kioskbrowser-2/start.sh`
 - `/home/<app_user>/.config/systemd/user/kioskbrowser-2.service`
 
-When the script runs with `--displays=2`, `kioskbrowser-2.service` is enabled automatically. For single-display installs (`--displays=1`), it is left disabled. Display 2 now uses the same startup page behavior as display 1, including the in-page URL field and **Set start page** flow that writes to `/home/<app_user>/applications/kioskbrowser-2/settings/startup_url.txt`. The display 2 launcher resolves its target output from the generated display mapping at runtime.
+When the script runs with `--displays=2`, `kioskbrowser-2.service` is enabled automatically. For single-display installs (`--displays=1`), it is left disabled. Display 2 now uses the same startup page behavior as display 1, including the in-page URL field and **Set start page** flow that writes to `/home/<app_user>/applications/kioskbrowser-2/settings/startup_url.txt`. The display 2 launcher uses the logical `KIOSK-D-2` identifier and leaves physical routing to the generated labwc rules.
 
 ---
 
