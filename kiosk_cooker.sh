@@ -1183,6 +1183,8 @@ export XMODIFIERS=@im=wayland
 FORCE_MODE="$kiosk_force_mode"
 MODE="$kiosk_mode"
 NUM_DISPLAYS="$kiosk_num_displays"
+DISPLAY_1_OUTPUT="$display_1_output"
+DISPLAY_2_OUTPUT="$display_2_output"
 TARGET_WAYLAND_DISPLAY="wayland-0"
 
 WAIT_SECS=20
@@ -1205,10 +1207,31 @@ wayland_query() {
   wlr-randr 2>/dev/null
 }
 
-pick_outputs() {
-  local outs
-  outs="\$(wayland_query | awk '/^HDMI-A-[0-9]+ /{print \$1} /^HDMI-[0-9]+ /{print \$1}' | head -n "\$NUM_DISPLAYS")"
-  echo "\$outs"
+output_exists() {
+  local output="\$1"
+  wayland_query | awk -v output="\$output" '\$1 == output { found=1; exit } END { exit(found ? 0 : 1) }'
+}
+
+resolve_output_name() {
+  local preferred="\$1"
+  local alternate=""
+
+  if output_exists "\$preferred"; then
+    printf '%s' "\$preferred"
+    return 0
+  fi
+
+  case "\$preferred" in
+    HDMI-A-*) alternate="HDMI-\${preferred#HDMI-A-}" ;;
+    HDMI-*) alternate="HDMI-A-\${preferred#HDMI-}" ;;
+  esac
+
+  if [ -n "\$alternate" ] && output_exists "\$alternate"; then
+    printf '%s' "\$alternate"
+    return 0
+  fi
+
+  return 1
 }
 
 current_output_width() {
@@ -1257,19 +1280,21 @@ init_kiosk_after_wayland_ready() {
     sleep 0.1
   done
 
-  local outs out1 out2
-  outs="\$(pick_outputs)"
-  out1="\$(echo "\$outs" | sed -n '1p')"
-  out2="\$(echo "\$outs" | sed -n '2p')"
+  local out1 out2
+  out1="\$(resolve_output_name "\$DISPLAY_1_OUTPUT" || true)"
+  out2=""
+  if [ "\$NUM_DISPLAYS" -eq 2 ]; then
+    out2="\$(resolve_output_name "\$DISPLAY_2_OUTPUT" || true)"
+  fi
 
   if [ -z "\${out1:-}" ]; then
-    log "Could not find primary HDMI output via wlr-randr. Full output state:"
+    log "Could not find configured primary output '\$DISPLAY_1_OUTPUT' via wlr-randr. Full output state:"
     wayland_query || true
     return 1
   fi
 
   if [ "\$NUM_DISPLAYS" -eq 2 ] && [ -z "\${out2:-}" ]; then
-    log "Could not find second HDMI output via wlr-randr. Full output state:"
+    log "Could not find configured second output '\$DISPLAY_2_OUTPUT' via wlr-randr. Full output state:"
     wayland_query || true
     return 1
   fi
