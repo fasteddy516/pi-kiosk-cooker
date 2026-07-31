@@ -409,6 +409,60 @@ prompt_display_connector() {
   done
 }
 
+load_display_config() {
+  [ -f "$display_config_file" ] || return 0
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      ''|\#*)
+        ;;
+      displays=*)
+        if [ "$displays_explicit" -eq 0 ]; then
+          displays="${line#*=}"
+        fi
+        ;;
+      display_1_output=*)
+        if [ "$display_1_output_explicit" -eq 0 ]; then
+          display_1_output="${line#*=}"
+        fi
+        ;;
+      display_2_output=*)
+        if [ "$display_2_output_explicit" -eq 0 ]; then
+          display_2_output="${line#*=}"
+        fi
+        ;;
+      display_1_touch_device=*)
+        if [ "$display_1_touch_device_explicit" -eq 0 ]; then
+          display_1_touch_device="${line#*=}"
+        fi
+        ;;
+      display_2_touch_device=*)
+        if [ "$display_2_touch_device_explicit" -eq 0 ]; then
+          display_2_touch_device="${line#*=}"
+        fi
+        ;;
+    esac
+  done < "$display_config_file"
+}
+
+save_display_config() {
+  run_step "Creating kiosk display config directory" mkdir -p "$display_config_dir"
+
+  step_begin "Writing kiosk display config"
+  if cat > "$display_config_file" << EOF; then
+# Managed by pi-kiosk-cooker
+displays=$displays
+display_1_output=$display_1_output
+display_2_output=$display_2_output
+display_1_touch_device=$display_1_touch_device
+display_2_touch_device=$display_2_touch_device
+EOF
+    step_ok
+  else
+    step_error "Unable to write $display_config_file"
+  fi
+}
+
 print_line "${C_RED}🔥${C_RESET}${C_LIGHT_BLUE} pi-kiosk-cooker ${SCRIPT_VERSION} by fasteddy516${C_RESET}"
 
 # ensure the script is being run as root
@@ -512,6 +566,11 @@ fi
 
 # process command-line arguments
 remember=0
+displays_explicit=0
+display_1_output_explicit=0
+display_2_output_explicit=0
+display_1_touch_device_explicit=0
+display_2_touch_device_explicit=0
 for arg in "$@"; do
   case $arg in
     --user=*)
@@ -522,21 +581,26 @@ for arg in "$@"; do
       ;;
     --displays=*)
       displays="${arg#*=}"
+      displays_explicit=1
       if [ "$displays" != "1" ] && [ "$displays" != "2" ]; then
         fail "Invalid value for --displays: '$displays' (must be 1 or 2)"
       fi
       ;;
     --display-1-output=*)
       display_1_output="${arg#*=}"
+      display_1_output_explicit=1
       ;;
     --display-2-output=*)
       display_2_output="${arg#*=}"
+      display_2_output_explicit=1
       ;;
     --display-1-touch-device=*)
       display_1_touch_device="${arg#*=}"
+      display_1_touch_device_explicit=1
       ;;
     --display-2-touch-device=*)
       display_2_touch_device="${arg#*=}"
+      display_2_touch_device_explicit=1
       ;;
     --video=*)
       video+=("${arg#*=}")
@@ -574,6 +638,8 @@ done
 if [[ ! "$app_user" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]]; then
   fail "Invalid value for --user: '$app_user' (must be a valid Linux username)"
 fi
+
+load_display_config
 
 ensure_kmsprint_available
 
@@ -845,6 +911,9 @@ else
     step_error "Failed to create user '$app_user'"
   fi
 fi
+
+save_display_config
+run_step "Setting ownership for kiosk display config" chown -R "$app_user:$app_user" "$display_config_dir"
 
 # add kiosk user to required supplemental groups that exist on this OS
 desired_groups="video render input seat"
