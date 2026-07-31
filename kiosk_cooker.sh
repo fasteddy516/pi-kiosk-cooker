@@ -350,19 +350,18 @@ connector_is_active() {
 }
 
 print_connector_options() {
+  local logical_display="$1"
   local choice connector
 
   print_line "Select connector:"
   for choice in 1 2 3 4; do
     connector="$(connector_from_menu_choice "$choice")"
-    if connector_exists "$connector"; then
-      if connector_is_active "$connector"; then
-        print_line "  $choice) $connector [active]"
-      else
-        print_line "  $choice) $connector [present]"
-      fi
+    if [ "$logical_display" = "2" ] && [ -n "$display_1_output" ] && [ "$connector" = "$display_1_output" ]; then
+      print_line "  $choice) ($connector) [assigned as Display 1]"
+    elif connector_exists "$connector"; then
+      print_line "  $choice) $connector [detected]"
     else
-      print_line "  $choice) $connector [missing]"
+      print_line "  $choice) $connector"
     fi
   done
 }
@@ -393,7 +392,7 @@ prompt_display_connector() {
   while true; do
     refresh_kmsprint_cache
     print_line ""
-    print_connector_options
+    print_connector_options "$logical_display"
     printf 'Select output for display %s (1-4): ' "$logical_display"
     IFS= read -r answer
     connector="$(connector_from_menu_choice "$answer")"
@@ -401,8 +400,9 @@ prompt_display_connector() {
       print_line "! Invalid selection '$answer' (must be 1, 2, 3, or 4)"
       continue
     fi
-    if ! connector_exists "$connector"; then
-      fail "Connector '$connector' does not exist according to kmsprint"
+    if [ "$logical_display" = "2" ] && [ -n "$display_1_output" ] && [ "$connector" = "$display_1_output" ]; then
+      print_line "! '$connector' is already assigned as Display 1"
+      continue
     fi
     printf -v "$target_var" '%s' "$connector"
     return 0
@@ -597,20 +597,12 @@ if ! is_supported_connector "$display_1_output"; then
 fi
 
 refresh_kmsprint_cache
-if ! connector_exists "$display_1_output"; then
-  fail "Configured display_1_output '$display_1_output' does not exist according to kmsprint"
-fi
-
 if [ "$displays" = "2" ]; then
   if [ -z "$display_2_output" ]; then
     prompt_display_connector "2" display_2_output
   fi
   if ! is_supported_connector "$display_2_output"; then
     fail "Invalid value for --display-2-output: '$display_2_output' (must be HDMI-A-1, HDMI-A-2, DSI-1, or DSI-2)"
-  fi
-  refresh_kmsprint_cache
-  if ! connector_exists "$display_2_output"; then
-    fail "Configured display_2_output '$display_2_output' does not exist according to kmsprint"
   fi
   if [ "$display_1_output" = "$display_2_output" ]; then
     fail "display_1_output and display_2_output cannot be the same when --displays=2"
