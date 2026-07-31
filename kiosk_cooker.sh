@@ -280,6 +280,27 @@ configure_wireless_overlays() {
   return "$status"
 }
 
+connector_from_menu_choice() {
+  case "$1" in
+    1) echo "HDMI-A-1" ;;
+    2) echo "HDMI-A-2" ;;
+    3) echo "DSI-1" ;;
+    4) echo "DSI-2" ;;
+    *) echo "" ;;
+  esac
+}
+
+is_supported_connector() {
+  case "$1" in
+    HDMI-A-1|HDMI-A-2|DSI-1|DSI-2)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 print_line "${C_RED}🔥${C_RESET}${C_LIGHT_BLUE} pi-kiosk-cooker ${SCRIPT_VERSION} by fasteddy516${C_RESET}"
 
 # ensure the script is being run as root
@@ -306,6 +327,25 @@ fi
 if [ ! -v displays ]; then
   displays=1
 fi
+
+# default logical output mapping tracks existing behavior until later stages
+if [ ! -v display_1_output ]; then
+  display_1_output="HDMI-A-1"
+fi
+if [ ! -v display_2_output ]; then
+  display_2_output="HDMI-A-2"
+fi
+
+# one touch device per logical display (stage 1 scaffolding)
+if [ ! -v display_1_touch_device ]; then
+  display_1_touch_device="TSTP MTouch"
+fi
+if [ ! -v display_2_touch_device ]; then
+  display_2_touch_device=""
+fi
+
+display_config_dir="/home/$app_user/.config/kiosk"
+display_config_file="$display_config_dir/display-map.conf"
 
 # set default video kernel command-line entries if they haven't been specified
 if [ ! -v video ]; then
@@ -378,6 +418,18 @@ for arg in "$@"; do
         fail "Invalid value for --displays: '$displays' (must be 1 or 2)"
       fi
       ;;
+    --display-1-output=*)
+      display_1_output="${arg#*=}"
+      ;;
+    --display-2-output=*)
+      display_2_output="${arg#*=}"
+      ;;
+    --display-1-touch-device=*)
+      display_1_touch_device="${arg#*=}"
+      ;;
+    --display-2-touch-device=*)
+      display_2_touch_device="${arg#*=}"
+      ;;
     --video=*)
       video+=("${arg#*=}")
       ;;
@@ -413,6 +465,19 @@ done
 
 if [[ ! "$app_user" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]]; then
   fail "Invalid value for --user: '$app_user' (must be a valid Linux username)"
+fi
+
+if ! is_supported_connector "$display_1_output"; then
+  fail "Invalid value for --display-1-output: '$display_1_output' (must be HDMI-A-1, HDMI-A-2, DSI-1, or DSI-2)"
+fi
+
+if [ "$displays" = "2" ]; then
+  if ! is_supported_connector "$display_2_output"; then
+    fail "Invalid value for --display-2-output: '$display_2_output' (must be HDMI-A-1, HDMI-A-2, DSI-1, or DSI-2)"
+  fi
+  if [ "$display_1_output" = "$display_2_output" ]; then
+    fail "display_1_output and display_2_output cannot be the same when --displays=2"
+  fi
 fi
 
 case "$edid" in
