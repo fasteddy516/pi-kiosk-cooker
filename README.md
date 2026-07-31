@@ -33,11 +33,19 @@ chmod +x kiosk_cooker.sh
 
 `--displays=<1|2>` sets the number of HDMI displays to configure.  Defaults to `1`.
 
+`--display-1-output=<connector>` sets the physical output used for logical display 1.  Supported values are `HDMI-A-1`, `HDMI-A-2`, `DSI-1`, and `DSI-2`.  When omitted, the installer will prompt for the value interactively if it cannot infer one.
+
+`--display-2-output=<connector>` sets the physical output used for logical display 2.  This is only meaningful when `--displays=2`.  Supported values are `HDMI-A-1`, `HDMI-A-2`, `DSI-1`, and `DSI-2`.
+
+`--display-1-touch-device=<name>` assigns a touchscreen controller to logical display 1.  Use the exact `N: Name="..."` value from `/proc/bus/input/devices`.
+
+`--display-2-touch-device=<name>` assigns a touchscreen controller to logical display 2.  This is only meaningful when `--displays=2`, and the value should be the exact `N: Name="..."` string from `/proc/bus/input/devices`.
+
 `--video=<value>` adds a `video=<value>` token to `/boot/firmware/cmdline.txt`.  This argument may be specified multiple times.  Values are passed through without parsing or validation, so use the exact kernel video argument value you want, for example `--video=HDMI-A-1:1280x800@60D`.  When at least one `--video` argument is specified, all existing `video=` tokens are removed from `cmdline.txt` before the specified ones are added; when no `--video` argument is specified, existing `video=` tokens are left untouched.
 
 `--no-apt-upgrade` skips the full `apt upgrade` step.  By default the script updates package lists and upgrades installed packages before installing kiosk dependencies.
 
-`--edid=<name>` sets the EDID profile to use for the display(s).  Defaults to `none` (skip EDID configuration).
+`--edid=<name>` sets the EDID profile to use for HDMI outputs.  Defaults to `none` (skip EDID configuration).
 
 > [!NOTE]
 > At this time, the only supported EDID options are `none` (the default) and `1080P-2CH` (1080p@60Hz with 2-channel PCM audio).  
@@ -56,15 +64,11 @@ chmod +x kiosk_cooker.sh
 
 
 ## Window Positioning
-This kiosk environment uses compositor rules (labwc `WindowRules` inside `~/.config/labwc/rc.xml`) to control application window placement as follows:
+This kiosk environment uses compositor rules (labwc `WindowRules` inside `~/.config/labwc/rc.xml`) together with the runtime-generated display map to control application window placement.
 
-1) Any application with an identifier (`app_id`) *or* window title that contains `HDMI-A-1` will be automatically moved to that output/display.
+At startup, the kiosk sync helper resolves `display-map.conf` into `display-map.env` and regenerates `rc.xml` with the active output names. The labwc rules then move windows whose `app_id` or title contains the resolved display name to that output, and any window whose identifier or title contains `Maximized` is maximized on whichever display it lands on.
 
-2) Any application with an identifier *or* window title that contains `HDMI-A-2` will be automatically moved to that output/display.
-
-3) Any application with an identifier *or* window title that contains `Maximized` will be maximized on whatever display it is displayed on.
-
-The full screen browser demo applications included in this script have identifiers that contain `HDMI-A-1-Maximized` and `HDMI-A-2-Maximized` to ensure they get routed to the correct output and take up all of the available screen real estate.  
+The full screen browser demo applications included in this script use the runtime-resolved display name plus `Maximized` in their profile/window identifiers so labwc can route them to the correct output and let them occupy the full screen.
 
 ## Touchscreen Assignment
 The generated labwc configuration also maps several known touchscreen controllers to `HDMI-A-1` automatically:
@@ -92,6 +96,15 @@ Look for the touchscreen device block and copy the value from its `N: Name="..."
 ```
 
 Choose `HDMI-A-1` or `HDMI-A-2` according to the physical display the touchscreen should control. If you rerun `kiosk_cooker.sh`, it regenerates `rc.xml`, so custom touchscreen entries should also be added to the script if you want them preserved across future runs.
+
+
+## Display Mapping
+The script now treats the display mapping as a small two-file workflow:
+
+- `display-map.conf` is the editable source of truth under `/home/<app_user>/.config/kiosk/`. Change this file when you want to update which physical outputs or touch devices belong to each logical display.
+- `display-map.env` is generated from `display-map.conf` at runtime. The kiosk launcher and browser start scripts read this file, so it should be treated as derived output rather than something to edit by hand.
+
+To apply a mapping change, edit `display-map.conf` and then reboot or restart `kiosk.service` so the runtime helper regenerates `display-map.env` and `~/.config/labwc/rc.xml` from the updated config.
 
 
 ## Under the hood
@@ -175,6 +188,8 @@ The launcher also starts an initialization task alongside `labwc`. That task wai
 
 **`labwc/rc.xml`** is generated with touchscreen output mappings for known controllers, plus three layers of compositor decoration suppression. `<core><decoration>client</decoration>` instructs labwc to prefer client-side decorations (CSD) globally, meaning windows negotiate their own frame via the `xdg-decoration` protocol rather than having the compositor draw a title bar. Chromium, when launched with `WaylandWindowDecorations` in `--enable-features`, requests CSD and suppresses its own title bar when maximized. A `<windowRule identifier="*" serverDecoration="no"/>` rule acts as a belt-and-suspenders fallback in case CSD negotiation fails for any window. Finally, a custom zero-pixel `kiosk` theme (`border.width: 0`, `titlebar.height: 0`) is installed under `~/.local/share/themes/kiosk/openbox-3/themerc` and referenced via `<theme><name>kiosk</name></theme>` — if server-side decorations are ever applied despite the above, they render invisibly.
 
+**`display-map.conf`** is the persistent runtime mapping config that the helper reads on startup. **`display-map.env`** is the helper's generated export file, containing the resolved logical-display values that the session launcher and browser start scripts consume. If you need to change display placement or touch assignment, edit `display-map.conf`, then reboot or restart `kiosk.service` so the derived files are refreshed.
+
 ### Browser kiosk service (`kioskbrowser-1.service`)
 After the graphical session and display layout are ready, `kioskbrowser-1.service` starts a fullscreen Chromium kiosk instance for display 1 and is configured with `Restart=always` so it automatically respawns if it exits or crashes. This is a user-level systemd service installed at `/home/<app_user>/.config/systemd/user/kioskbrowser-1.service` and enabled under `kiosk.target`.
 
@@ -195,7 +210,7 @@ The script also creates a parallel display 2 browser setup:
 - `/home/<app_user>/applications/kioskbrowser-2/start.sh`
 - `/home/<app_user>/.config/systemd/user/kioskbrowser-2.service`
 
-When the script runs with `--displays=2`, `kioskbrowser-2.service` is enabled automatically. For single-display installs (`--displays=1`), it is left disabled. Display 2 now uses the same startup page behavior as display 1, including the in-page URL field and **Set start page** flow that writes to `/home/<app_user>/applications/kioskbrowser-2/settings/startup_url.txt`. The display 2 launcher targets `HDMI-A-2` when present.
+When the script runs with `--displays=2`, `kioskbrowser-2.service` is enabled automatically. For single-display installs (`--displays=1`), it is left disabled. Display 2 now uses the same startup page behavior as display 1, including the in-page URL field and **Set start page** flow that writes to `/home/<app_user>/applications/kioskbrowser-2/settings/startup_url.txt`. The display 2 launcher resolves its target output from the generated display mapping at runtime.
 
 ---
 
