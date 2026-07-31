@@ -463,6 +463,16 @@ EOF
   fi
 }
 
+xml_escape() {
+  local value="$1"
+  value="${value//&/&amp;}"
+  value="${value//</&lt;}"
+  value="${value//>/&gt;}"
+  value="${value//\"/&quot;}"
+  value="${value//\'/&apos;}"
+  printf '%s' "$value"
+}
+
 print_line "${C_RED}🔥${C_RESET}${C_LIGHT_BLUE} pi-kiosk-cooker ${SCRIPT_VERSION} by fasteddy516${C_RESET}"
 
 # ensure the script is being run as root
@@ -1026,19 +1036,44 @@ else
   labwc_connect_autostart=""
 fi
 run_step "Creating labwc config directory" su "$app_user" -c "mkdir -p ~/.config/labwc"
+
+labwc_touch_entries=""
+if [ -n "$display_1_touch_device" ]; then
+  display_1_touch_device_xml="$(xml_escape "$display_1_touch_device")"
+  labwc_touch_entries="  <touch deviceName=\"$display_1_touch_device_xml\" mapToOutput=\"$display_1_output\" mouseEmulation=\"yes\" />"
+fi
+if [ "$displays" -eq 2 ] && [ -n "$display_2_touch_device" ]; then
+  display_2_touch_device_xml="$(xml_escape "$display_2_touch_device")"
+  if [ -n "$labwc_touch_entries" ]; then
+    labwc_touch_entries="$labwc_touch_entries
+  <touch deviceName=\"$display_2_touch_device_xml\" mapToOutput=\"$display_2_output\" mouseEmulation=\"yes\" />"
+  else
+    labwc_touch_entries="  <touch deviceName=\"$display_2_touch_device_xml\" mapToOutput=\"$display_2_output\" mouseEmulation=\"yes\" />"
+  fi
+fi
+
+labwc_display_2_rules=""
+if [ "$displays" -eq 2 ]; then
+  labwc_display_2_rules="
+    <!-- Move to output $display_2_output based on app_id -->
+    <windowRule identifier=\"*$display_2_output*\">
+      <action name=\"MoveToOutput\" output=\"$display_2_output\" />
+      <skipWindowSwitcher>yes</skipWindowSwitcher>
+    </windowRule>
+
+    <!-- Move to output $display_2_output based on window title -->
+    <windowRule title=\"*$display_2_output*\">
+      <action name=\"MoveToOutput\" output=\"$display_2_output\" />
+      <skipWindowSwitcher>yes</skipWindowSwitcher>
+    </windowRule>"
+fi
+
 step_begin "Writing labwc rc.xml"
-if cat << 'EOF' > "/home/$app_user/.config/labwc/rc.xml"; then
+if cat << EOF > "/home/$app_user/.config/labwc/rc.xml"; then
 <?xml version="1.0"?>
 <labwc_config>
 
-  <!-- Planar PCT2235 -->
-  <touch deviceName="USBest Technology SiS HID Touch Controller" mapToOutput="HDMI-A-1" mouseEmulation="yes" />
-  
-  <!-- Argon40 Industria HMI 10CS -->
-  <touch deviceName="wch.cn USB2IIC_CTP_CONTROL" mapToOutput="HDMI-A-1" mouseEmulation="yes" />
-  
-  <!-- Howens CX101PI-C/D -->
-  <touch deviceName="TSTP MTouch" mapToOutput="HDMI-A-1" mouseEmulation="yes" />
+${labwc_touch_entries}
   
   <core>
     <!-- Prefer client-side decorations so Chromium negotiates via xdg-decoration. -->
@@ -1060,29 +1095,18 @@ if cat << 'EOF' > "/home/$app_user/.config/labwc/rc.xml"; then
     <!-- Belt-and-suspenders: disable SSD for every window regardless of app_id. -->
     <windowRule identifier="*" serverDecoration="no" />
 
-    <!-- Move to output HDMI-A-1 based on app_id -->
-    <windowRule identifier="*HDMI-A-1*">
-      <action name="MoveToOutput" output="HDMI-A-1" />
+    <!-- Move to output $display_1_output based on app_id -->
+    <windowRule identifier="*$display_1_output*">
+      <action name="MoveToOutput" output="$display_1_output" />
       <skipWindowSwitcher>yes</skipWindowSwitcher>
     </windowRule>
 
-    <!-- Move to output HDMI-A-1 based on window title -->
-    <windowRule title="*HDMI-A-1*">
-      <action name="MoveToOutput" output="HDMI-A-1" />
+    <!-- Move to output $display_1_output based on window title -->
+    <windowRule title="*$display_1_output*">
+      <action name="MoveToOutput" output="$display_1_output" />
       <skipWindowSwitcher>yes</skipWindowSwitcher>
     </windowRule>
-
-    <!-- Move to output HDMI-A-2 based on app_id -->
-    <windowRule identifier="*HDMI-A-2*">
-      <action name="MoveToOutput" output="HDMI-A-2" />
-      <skipWindowSwitcher>yes</skipWindowSwitcher>
-    </windowRule>
-
-    <!-- Move to output HDMI-A-2 based on window title -->
-    <windowRule title="*HDMI-A-2*">
-      <action name="MoveToOutput" output="HDMI-A-2" />
-      <skipWindowSwitcher>yes</skipWindowSwitcher>
-    </windowRule>
+${labwc_display_2_rules}
 
     <!-- Maximize based on app_id -->
     <windowRule identifier="*Maximized*">
@@ -1813,8 +1837,8 @@ EOF
 run_step "Generating browser 1 local start page" create_kioskbrowser_index 1 250
 run_step "Generating browser 2 local start page" create_kioskbrowser_index 2 160
 
-run_step "Generating browser 1 launcher" create_kioskbrowser_launcher 1 "HDMI-A-1"
-run_step "Generating browser 2 launcher" create_kioskbrowser_launcher 2 "HDMI-A-2"
+run_step "Generating browser 1 launcher" create_kioskbrowser_launcher 1 "$display_1_output"
+run_step "Generating browser 2 launcher" create_kioskbrowser_launcher 2 "$display_2_output"
 
 # add kiosk.service to start the graphical session on tty1 at boot
 step_begin "Writing kiosk.service"
