@@ -387,6 +387,7 @@ prompt_display_count() {
 
 prompt_display_connector() {
   local logical_display="$1"
+  local target_var="$2"
   local answer connector
 
   while true; do
@@ -403,7 +404,7 @@ prompt_display_connector() {
     if ! connector_exists "$connector"; then
       fail "Connector '$connector' does not exist according to kmsprint"
     fi
-    echo "$connector"
+    printf -v "$target_var" '%s' "$connector"
     return 0
   done
 }
@@ -588,7 +589,7 @@ if [ "$displays" != "1" ] && [ "$displays" != "2" ]; then
 fi
 
 if [ -z "$display_1_output" ]; then
-  display_1_output="$(prompt_display_connector "1")"
+  prompt_display_connector "1" display_1_output
 fi
 
 if ! is_supported_connector "$display_1_output"; then
@@ -602,7 +603,7 @@ fi
 
 if [ "$displays" = "2" ]; then
   if [ -z "$display_2_output" ]; then
-    display_2_output="$(prompt_display_connector "2")"
+    prompt_display_connector "2" display_2_output
   fi
   if ! is_supported_connector "$display_2_output"; then
     fail "Invalid value for --display-2-output: '$display_2_output' (must be HDMI-A-1, HDMI-A-2, DSI-1, or DSI-2)"
