@@ -290,6 +290,18 @@ connector_from_menu_choice() {
   esac
 }
 
+normalize_connector_value() {
+  local value="$1"
+  local mapped
+
+  mapped="$(connector_from_menu_choice "$value")"
+  if [ -n "$mapped" ]; then
+    echo "$mapped"
+  else
+    echo "$value"
+  fi
+}
+
 is_supported_connector() {
   case "$1" in
     HDMI-A-1|HDMI-A-2|DSI-1|DSI-2)
@@ -299,6 +311,101 @@ is_supported_connector() {
       return 1
       ;;
   esac
+}
+
+ensure_kmsprint_available() {
+  if ! command -v kmsprint >/dev/null 2>&1; then
+    fail "kmsprint is required for display connector detection but was not found"
+  fi
+}
+
+kmsprint_cache=""
+
+refresh_kmsprint_cache() {
+  if ! kmsprint_cache="$(kmsprint 2>/dev/null)"; then
+    fail "Failed to query display connectors via kmsprint"
+  fi
+}
+
+connector_kmsprint_line() {
+  local connector="$1"
+  printf '%s\n' "$kmsprint_cache" | grep -E "(^|[^A-Z0-9-])${connector}([^A-Z0-9-]|$)" | head -n 1
+}
+
+connector_exists() {
+  local connector="$1"
+  [ -n "$(connector_kmsprint_line "$connector")" ]
+}
+
+connector_is_active() {
+  local connector="$1"
+  local line
+
+  line="$(connector_kmsprint_line "$connector")"
+  if [ -z "$line" ]; then
+    return 1
+  fi
+
+  echo "$line" | grep -Eqi 'connected|enabled|active'
+}
+
+print_connector_options() {
+  local choice connector
+
+  print_line "Select connector:"
+  for choice in 1 2 3 4; do
+    connector="$(connector_from_menu_choice "$choice")"
+    if connector_exists "$connector"; then
+      if connector_is_active "$connector"; then
+        print_line "  $choice) $connector [active]"
+      else
+        print_line "  $choice) $connector [present]"
+      fi
+    else
+      print_line "  $choice) $connector [missing]"
+    fi
+  done
+}
+
+prompt_display_count() {
+  local answer
+
+  while true; do
+    printf 'How many displays should be configured? (1 or 2): '
+    IFS= read -r answer
+    case "$answer" in
+      1|2)
+        displays="$answer"
+        return 0
+        ;;
+      *)
+        print_line "! Invalid value '$answer' (must be 1 or 2)"
+        ;;
+    esac
+  done
+}
+
+prompt_display_connector() {
+  local logical_display="$1"
+  local answer connector
+
+  while true; do
+    refresh_kmsprint_cache
+    print_line ""
+    print_connector_options
+    printf 'Select output for display %s (1-4): ' "$logical_display"
+    IFS= read -r answer
+    connector="$(connector_from_menu_choice "$answer")"
+    if [ -z "$connector" ]; then
+      print_line "! Invalid selection '$answer' (must be 1, 2, 3, or 4)"
+      continue
+    fi
+    if ! connector_exists "$connector"; then
+      fail "Connector '$connector' does not exist according to kmsprint"
+    fi
+    echo "$connector"
+    return 0
+  done
 }
 
 print_line "${C_RED}🔥${C_RESET}${C_LIGHT_BLUE} pi-kiosk-cooker ${SCRIPT_VERSION} by fasteddy516${C_RESET}"
@@ -325,15 +432,15 @@ fi
 
 # set default number of displays if it hasn't been specified
 if [ ! -v displays ]; then
-  displays=1
+  displays=""
 fi
 
-# default logical output mapping tracks existing behavior until later stages
+# set default logical output mapping (resolved during stage 2 selection)
 if [ ! -v display_1_output ]; then
-  display_1_output="HDMI-A-1"
+  display_1_output=""
 fi
 if [ ! -v display_2_output ]; then
-  display_2_output="HDMI-A-2"
+  display_2_output=""
 fi
 
 # one touch device per logical display (stage 1 scaffolding)
@@ -467,17 +574,51 @@ if [[ ! "$app_user" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]]; then
   fail "Invalid value for --user: '$app_user' (must be a valid Linux username)"
 fi
 
+ensure_kmsprint_available
+
+display_1_output="$(normalize_connector_value "$display_1_output")"
+display_2_output="$(normalize_connector_value "$display_2_output")"
+
+if [ -z "$displays" ]; then
+  prompt_display_count
+fi
+
+if [ "$displays" != "1" ] && [ "$displays" != "2" ]; then
+  fail "Invalid value for --displays: '$displays' (must be 1 or 2)"
+fi
+
+if [ -z "$display_1_output" ]; then
+  display_1_output="$(prompt_display_connector "1")"
+fi
+
 if ! is_supported_connector "$display_1_output"; then
   fail "Invalid value for --display-1-output: '$display_1_output' (must be HDMI-A-1, HDMI-A-2, DSI-1, or DSI-2)"
 fi
 
+refresh_kmsprint_cache
+if ! connector_exists "$display_1_output"; then
+  fail "Configured display_1_output '$display_1_output' does not exist according to kmsprint"
+fi
+
 if [ "$displays" = "2" ]; then
+  if [ -z "$display_2_output" ]; then
+    display_2_output="$(prompt_display_connector "2")"
+  fi
   if ! is_supported_connector "$display_2_output"; then
     fail "Invalid value for --display-2-output: '$display_2_output' (must be HDMI-A-1, HDMI-A-2, DSI-1, or DSI-2)"
+  fi
+  refresh_kmsprint_cache
+  if ! connector_exists "$display_2_output"; then
+    fail "Configured display_2_output '$display_2_output' does not exist according to kmsprint"
   fi
   if [ "$display_1_output" = "$display_2_output" ]; then
     fail "display_1_output and display_2_output cannot be the same when --displays=2"
   fi
+else
+  if [ -n "$display_2_output" ]; then
+    print_line "${C_YELLOW}! note: ignoring display_2_output because displays=1${C_RESET}"
+  fi
+  display_2_output=""
 fi
 
 case "$edid" in
