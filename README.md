@@ -46,6 +46,8 @@ chmod +x kiosk_cooker.sh
 
 `--no-rpi-connect` skips installation of Raspberry Pi Connect (`rpi-connect`).  Connect is installed and its user services enabled globally by default.
 
+`--disable-all-wireless` disables onboard Wi-Fi and Bluetooth.  When specified, the script writes `dtoverlay=disable-wifi` and `dtoverlay=disable-bt` to the `[all]` section of `/boot/firmware/config.txt` (creating `[all]` if needed), and disables `bluetooth.service` and `wpa_supplicant.service`.
+
 `--no-default-application` disables the generated default Chromium kiosk browser user services (`kioskbrowser-1.service` and `kioskbrowser-2.service`).  When omitted, the default browser application services are enabled according to the configured display count.
 
 `--no-reboot` disables the automatic reboot at the end of the script.
@@ -139,6 +141,14 @@ Four display-related settings are applied via `raspi-config`'s non-interactive i
 - **I2C enabled** — Enables the Raspberry Pi I2C bus so `ddcutil` can use DDC/CI for display management.
 
 In addition, the script directly enforces `disable_splash=1` in `/boot/firmware/config.txt` to disable the early firmware Raspberry logo splash reliably across Raspberry Pi OS variants.
+
+### Wireless disable option (`--disable-all-wireless`)
+When `--disable-all-wireless` is passed, the script disables Raspberry Pi onboard wireless at both firmware and service levels:
+
+- It ensures `dtoverlay=disable-wifi` and `dtoverlay=disable-bt` are present in the `[all]` section of `/boot/firmware/config.txt` (and creates `[all]` if missing).
+- It runs `systemctl disable --now bluetooth.service wpa_supplicant.service` so Bluetooth and Wi-Fi user-space services are stopped and disabled.
+
+Because firmware overlays are applied at boot, a reboot is required for wireless hardware disablement to take effect.
 
 ### Kiosk application user
 A dedicated user account (default: `kiosk`) is created for running the kiosk session and all associated applications. Running as a non-root user limits the blast radius of any application-level issue and is required by `seatd` and the Wayland session model. The user is added to the `video`, `render`, `input`, and `seat` groups so it can access the GPU, input devices, and seat management without elevated privileges.
