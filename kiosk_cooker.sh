@@ -500,14 +500,11 @@ fi
 
 # one touch device per logical display (stage 1 scaffolding)
 if [ ! -v display_1_touch_device ]; then
-  display_1_touch_device="TSTP MTouch"
+  display_1_touch_device=""
 fi
 if [ ! -v display_2_touch_device ]; then
   display_2_touch_device=""
 fi
-
-display_config_dir="/home/$app_user/.config/kiosk"
-display_config_file="$display_config_dir/display-map.conf"
 
 # set default video kernel command-line entries if they haven't been specified
 if [ ! -v video ]; then
@@ -638,6 +635,9 @@ done
 if [[ ! "$app_user" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]]; then
   fail "Invalid value for --user: '$app_user' (must be a valid Linux username)"
 fi
+
+display_config_dir="/home/$app_user/.config/kiosk"
+display_config_file="$display_config_dir/display-map.conf"
 
 load_display_config
 
