@@ -409,42 +409,6 @@ prompt_display_connector() {
   done
 }
 
-load_display_config() {
-  [ -f "$display_config_file" ] || return 0
-
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in
-      ''|\#*)
-        ;;
-      displays=*)
-        if [ "$displays_explicit" -eq 0 ]; then
-          displays="${line#*=}"
-        fi
-        ;;
-      display_1_output=*)
-        if [ "$display_1_output_explicit" -eq 0 ]; then
-          display_1_output="${line#*=}"
-        fi
-        ;;
-      display_2_output=*)
-        if [ "$display_2_output_explicit" -eq 0 ]; then
-          display_2_output="${line#*=}"
-        fi
-        ;;
-      display_1_touch_device=*)
-        if [ "$display_1_touch_device_explicit" -eq 0 ]; then
-          display_1_touch_device="${line#*=}"
-        fi
-        ;;
-      display_2_touch_device=*)
-        if [ "$display_2_touch_device_explicit" -eq 0 ]; then
-          display_2_touch_device="${line#*=}"
-        fi
-        ;;
-    esac
-  done < "$display_config_file"
-}
-
 save_display_config() {
   run_step "Creating kiosk display config directory" mkdir -p "$display_config_dir"
 
@@ -648,8 +612,6 @@ fi
 
 display_config_dir="/home/$app_user/.config/kiosk"
 display_config_file="$display_config_dir/display-map.conf"
-
-load_display_config
 
 ensure_kmsprint_available
 
@@ -1036,45 +998,150 @@ else
   labwc_connect_autostart=""
 fi
 run_step "Creating labwc config directory" su "$app_user" -c "mkdir -p ~/.config/labwc"
+step_begin "Writing display map runtime sync helper"
+if cat << EOF > "/home/$app_user/.local/bin/kiosk-sync-display-map"; then
+#!/usr/bin/env bash
+set -euo pipefail
+
+MAP_FILE="\$HOME/.config/kiosk/display-map.conf"
+ENV_FILE="\$HOME/.config/kiosk/display-map.env"
+RC_FILE="\$HOME/.config/labwc/rc.xml"
+
+DEFAULT_DISPLAYS="$displays"
+DEFAULT_DISPLAY_1_OUTPUT="$display_1_output"
+DEFAULT_DISPLAY_2_OUTPUT="$display_2_output"
+
+normalize_connector_value() {
+  case "\$1" in
+    1) printf '%s' "HDMI-A-1" ;;
+    2) printf '%s' "HDMI-A-2" ;;
+    3) printf '%s' "DSI-1" ;;
+    4) printf '%s' "DSI-2" ;;
+    *) printf '%s' "\$1" ;;
+  esac
+}
+
+is_supported_connector() {
+  case "\$1" in
+    HDMI-A-1|HDMI-A-2|DSI-1|DSI-2)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+xml_escape() {
+  local value="\$1"
+  value="\${value//&/&amp;}"
+  value="\${value//</&lt;}"
+  value="\${value//>/&gt;}"
+  value="\${value//\"/&quot;}"
+  printf '%s' "\$value"
+}
+
+displays="\$DEFAULT_DISPLAYS"
+display_1_output="\$DEFAULT_DISPLAY_1_OUTPUT"
+display_2_output="\$DEFAULT_DISPLAY_2_OUTPUT"
+display_1_touch_device=""
+display_2_touch_device=""
+
+if [ -f "\$MAP_FILE" ]; then
+  while IFS= read -r line || [ -n "\$line" ]; do
+    case "\$line" in
+      ''|\#*)
+        ;;
+      displays=*)
+        displays="\${line#*=}"
+        ;;
+      display_1_output=*)
+        display_1_output="\${line#*=}"
+        ;;
+      display_2_output=*)
+        display_2_output="\${line#*=}"
+        ;;
+      display_1_touch_device=*)
+        display_1_touch_device="\${line#*=}"
+        ;;
+      display_2_touch_device=*)
+        display_2_touch_device="\${line#*=}"
+        ;;
+    esac
+  done < "\$MAP_FILE"
+fi
+
+display_1_output="\$(normalize_connector_value "\$display_1_output")"
+display_2_output="\$(normalize_connector_value "\$display_2_output")"
+
+if [ "\$displays" != "1" ] && [ "\$displays" != "2" ]; then
+  displays="\$DEFAULT_DISPLAYS"
+fi
+
+if ! is_supported_connector "\$display_1_output"; then
+  display_1_output="\$DEFAULT_DISPLAY_1_OUTPUT"
+fi
+
+if [ "\$displays" = "2" ]; then
+  if ! is_supported_connector "\$display_2_output" || [ "\$display_2_output" = "\$display_1_output" ]; then
+    display_2_output="\$DEFAULT_DISPLAY_2_OUTPUT"
+  fi
+  if ! is_supported_connector "\$display_2_output" || [ "\$display_2_output" = "\$display_1_output" ]; then
+    for candidate in HDMI-A-1 HDMI-A-2 DSI-1 DSI-2; do
+      if [ "\$candidate" != "\$display_1_output" ]; then
+        display_2_output="\$candidate"
+        break
+      fi
+    done
+  fi
+else
+  display_2_output=""
+fi
+
+mkdir -p "\$(dirname "\$ENV_FILE")" "\$(dirname "\$RC_FILE")"
+cat > "\$ENV_FILE" << ENV
+KIOSK_NUM_DISPLAYS=\$displays
+KIOSK_DISPLAY_1_OUTPUT=\$display_1_output
+KIOSK_DISPLAY_2_OUTPUT=\$display_2_output
+ENV
 
 labwc_touch_entries=""
-if [ -n "$display_1_touch_device" ]; then
-  display_1_touch_device_xml="$(xml_escape "$display_1_touch_device")"
-  labwc_touch_entries="  <touch deviceName=\"$display_1_touch_device_xml\" mapToOutput=\"$display_1_output\" mouseEmulation=\"yes\" />"
+if [ -n "\$display_1_touch_device" ]; then
+  display_1_touch_device_xml="\$(xml_escape "\$display_1_touch_device")"
+  labwc_touch_entries="  <touch deviceName=\"\$display_1_touch_device_xml\" mapToOutput=\"\$display_1_output\" mouseEmulation=\"yes\" />"
 fi
-if [ "$displays" -eq 2 ] && [ -n "$display_2_touch_device" ]; then
-  display_2_touch_device_xml="$(xml_escape "$display_2_touch_device")"
-  if [ -n "$labwc_touch_entries" ]; then
-    labwc_touch_entries="$labwc_touch_entries
-  <touch deviceName=\"$display_2_touch_device_xml\" mapToOutput=\"$display_2_output\" mouseEmulation=\"yes\" />"
+if [ "\$displays" = "2" ] && [ -n "\$display_2_touch_device" ]; then
+  display_2_touch_device_xml="\$(xml_escape "\$display_2_touch_device")"
+  if [ -n "\$labwc_touch_entries" ]; then
+    labwc_touch_entries="\$labwc_touch_entries
+  <touch deviceName=\"\$display_2_touch_device_xml\" mapToOutput=\"\$display_2_output\" mouseEmulation=\"yes\" />"
   else
-    labwc_touch_entries="  <touch deviceName=\"$display_2_touch_device_xml\" mapToOutput=\"$display_2_output\" mouseEmulation=\"yes\" />"
+    labwc_touch_entries="  <touch deviceName=\"\$display_2_touch_device_xml\" mapToOutput=\"\$display_2_output\" mouseEmulation=\"yes\" />"
   fi
 fi
 
 labwc_display_2_rules=""
-if [ "$displays" -eq 2 ]; then
+if [ "\$displays" = "2" ]; then
   labwc_display_2_rules="
-    <!-- Move to output $display_2_output based on app_id -->
-    <windowRule identifier=\"*$display_2_output*\">
-      <action name=\"MoveToOutput\" output=\"$display_2_output\" />
+    <!-- Move to output \$display_2_output based on app_id -->
+    <windowRule identifier=\"*\$display_2_output*\">
+      <action name=\"MoveToOutput\" output=\"\$display_2_output\" />
       <skipWindowSwitcher>yes</skipWindowSwitcher>
     </windowRule>
 
-    <!-- Move to output $display_2_output based on window title -->
-    <windowRule title=\"*$display_2_output*\">
-      <action name=\"MoveToOutput\" output=\"$display_2_output\" />
+    <!-- Move to output \$display_2_output based on window title -->
+    <windowRule title=\"*\$display_2_output*\">
+      <action name=\"MoveToOutput\" output=\"\$display_2_output\" />
       <skipWindowSwitcher>yes</skipWindowSwitcher>
     </windowRule>"
 fi
 
-step_begin "Writing labwc rc.xml"
-if cat << EOF > "/home/$app_user/.config/labwc/rc.xml"; then
+cat > "\$RC_FILE" << XML
 <?xml version="1.0"?>
 <labwc_config>
 
-${labwc_touch_entries}
-  
+\${labwc_touch_entries}
+
   <core>
     <!-- Prefer client-side decorations so Chromium negotiates via xdg-decoration. -->
     <decoration>client</decoration>
@@ -1095,18 +1162,18 @@ ${labwc_touch_entries}
     <!-- Belt-and-suspenders: disable SSD for every window regardless of app_id. -->
     <windowRule identifier="*" serverDecoration="no" />
 
-    <!-- Move to output $display_1_output based on app_id -->
-    <windowRule identifier="*$display_1_output*">
-      <action name="MoveToOutput" output="$display_1_output" />
+    <!-- Move to output \$display_1_output based on app_id -->
+    <windowRule identifier="*\$display_1_output*">
+      <action name="MoveToOutput" output="\$display_1_output" />
       <skipWindowSwitcher>yes</skipWindowSwitcher>
     </windowRule>
 
-    <!-- Move to output $display_1_output based on window title -->
-    <windowRule title="*$display_1_output*">
-      <action name="MoveToOutput" output="$display_1_output" />
+    <!-- Move to output \$display_1_output based on window title -->
+    <windowRule title="*\$display_1_output*">
+      <action name="MoveToOutput" output="\$display_1_output" />
       <skipWindowSwitcher>yes</skipWindowSwitcher>
     </windowRule>
-${labwc_display_2_rules}
+\${labwc_display_2_rules}
 
     <!-- Maximize based on app_id -->
     <windowRule identifier="*Maximized*">
@@ -1120,11 +1187,15 @@ ${labwc_display_2_rules}
 
   </windowRules>
 </labwc_config>
+XML
 EOF
   step_ok
 else
-  step_error "Unable to write /home/$app_user/.config/labwc/rc.xml"
+  step_error "Unable to write /home/$app_user/.local/bin/kiosk-sync-display-map"
 fi
+run_step "Setting runtime sync helper ownership" chown "$app_user:$app_user" "/home/$app_user/.local/bin/kiosk-sync-display-map"
+run_step "Making runtime sync helper executable" chmod +x "/home/$app_user/.local/bin/kiosk-sync-display-map"
+run_step "Rendering labwc rc.xml from display map" runuser -u "$app_user" -- "/home/$app_user/.local/bin/kiosk-sync-display-map"
 # Create a zero-size labwc theme so even if SSD is applied it renders invisibly
 run_step "Setting ownership for labwc config" chown "$app_user:$app_user" "/home/$app_user/.config/labwc/rc.xml"
 run_step "Creating kiosk theme directory" su "$app_user" -c "mkdir -p ~/.local/share/themes/kiosk/openbox-3"
@@ -1182,9 +1253,14 @@ export XMODIFIERS=@im=wayland
 
 FORCE_MODE="$kiosk_force_mode"
 MODE="$kiosk_mode"
-NUM_DISPLAYS="$kiosk_num_displays"
-DISPLAY_1_OUTPUT="$display_1_output"
-DISPLAY_2_OUTPUT="$display_2_output"
+DEFAULT_NUM_DISPLAYS="$kiosk_num_displays"
+DEFAULT_DISPLAY_1_OUTPUT="$display_1_output"
+DEFAULT_DISPLAY_2_OUTPUT="$display_2_output"
+NUM_DISPLAYS="$DEFAULT_NUM_DISPLAYS"
+DISPLAY_1_OUTPUT="$DEFAULT_DISPLAY_1_OUTPUT"
+DISPLAY_2_OUTPUT="$DEFAULT_DISPLAY_2_OUTPUT"
+DISPLAY_MAP_SYNC="\$HOME/.local/bin/kiosk-sync-display-map"
+DISPLAY_MAP_ENV="\$HOME/.config/kiosk/display-map.env"
 TARGET_WAYLAND_DISPLAY="wayland-0"
 
 WAIT_SECS=20
@@ -1192,6 +1268,43 @@ APPLY_RETRIES=20
 APPLY_RETRY_DELAY_SECS=0.5
 
 log() { echo "kiosk: \$*"; }
+
+load_runtime_display_map() {
+  NUM_DISPLAYS="\$DEFAULT_NUM_DISPLAYS"
+  DISPLAY_1_OUTPUT="\$DEFAULT_DISPLAY_1_OUTPUT"
+  DISPLAY_2_OUTPUT="\$DEFAULT_DISPLAY_2_OUTPUT"
+
+  if [ -x "\$DISPLAY_MAP_SYNC" ]; then
+    if ! "\$DISPLAY_MAP_SYNC"; then
+      log "Display map sync helper failed: \$DISPLAY_MAP_SYNC"
+      return 1
+    fi
+  fi
+
+  if [ -f "\$DISPLAY_MAP_ENV" ]; then
+    # shellcheck disable=SC1090
+    . "\$DISPLAY_MAP_ENV"
+    if [ -n "\${KIOSK_NUM_DISPLAYS:-}" ]; then
+      NUM_DISPLAYS="\$KIOSK_NUM_DISPLAYS"
+    fi
+    if [ -n "\${KIOSK_DISPLAY_1_OUTPUT:-}" ]; then
+      DISPLAY_1_OUTPUT="\$KIOSK_DISPLAY_1_OUTPUT"
+    fi
+    if [ -n "\${KIOSK_DISPLAY_2_OUTPUT:-}" ]; then
+      DISPLAY_2_OUTPUT="\$KIOSK_DISPLAY_2_OUTPUT"
+    fi
+  fi
+
+  if [ "\$NUM_DISPLAYS" != "1" ] && [ "\$NUM_DISPLAYS" != "2" ]; then
+    NUM_DISPLAYS="\$DEFAULT_NUM_DISPLAYS"
+  fi
+
+  if [ "\$NUM_DISPLAYS" = "1" ]; then
+    DISPLAY_2_OUTPUT=""
+  fi
+
+  return 0
+}
 
 wait_for_socket() {
   local path="\$1" secs="\$2"
@@ -1251,6 +1364,40 @@ current_output_width() {
   '
 }
 
+output_supports_forced_mode() {
+  local output="\$1"
+  case "\$output" in
+    HDMI-A-*|HDMI-*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+enable_output_at_pos() {
+  local output="\$1"
+  local pos="\$2"
+
+  if [ "\$FORCE_MODE" -eq 1 ] && output_supports_forced_mode "\$output"; then
+    wlr-randr --output "\$output" --on --mode "\$MODE" --pos "\$pos"
+  else
+    wlr-randr --output "\$output" --on --pos "\$pos"
+  fi
+}
+
+effective_output_width() {
+  local output="\$1"
+
+  if [ "\$FORCE_MODE" -eq 1 ] && output_supports_forced_mode "\$output"; then
+    printf '%s' "\${MODE%%x*}"
+    return 0
+  fi
+
+  current_output_width "\$output"
+}
+
 start_kiosk_target() {
   log "Layout applied successfully."
   export WAYLAND_DISPLAY="\$TARGET_WAYLAND_DISPLAY"
@@ -1300,35 +1447,20 @@ init_kiosk_after_wayland_ready() {
   fi
 
   for _ in \$(seq 1 "\$APPLY_RETRIES"); do
-    if [ "\$FORCE_MODE" -eq 1 ]; then
-      if [ "\$NUM_DISPLAYS" -eq 2 ]; then
-        if wlr-randr --output "\$out1" --on --mode "\$MODE" --pos 0,0 \
-          && wlr-randr --output "\$out2" --on --mode "\$MODE" --pos 1920,0; then
-          start_kiosk_target
-          return \$?
-        fi
-      else
-        if wlr-randr --output "\$out1" --on --mode "\$MODE" --pos 0,0; then
+    if [ "\$NUM_DISPLAYS" -eq 2 ]; then
+      if enable_output_at_pos "\$out1" "0,0"; then
+        out1_width="\$(effective_output_width "\$out1")"
+        if [ -z "\$out1_width" ]; then
+          log "Could not determine current width for \$out1 after enabling it."
+        elif enable_output_at_pos "\$out2" "\${out1_width},0"; then
           start_kiosk_target
           return \$?
         fi
       fi
     else
-      if [ "\$NUM_DISPLAYS" -eq 2 ]; then
-        if wlr-randr --output "\$out1" --on --pos 0,0; then
-          out1_width="\$(current_output_width "\$out1")"
-          if [ -z "\$out1_width" ]; then
-            log "Could not determine current width for \$out1 after enabling it."
-          elif wlr-randr --output "\$out2" --on --pos "\${out1_width},0"; then
-            start_kiosk_target
-            return \$?
-          fi
-        fi
-      else
-        if wlr-randr --output "\$out1" --on --pos 0,0; then
-          start_kiosk_target
-          return \$?
-        fi
+      if enable_output_at_pos "\$out1" "0,0"; then
+        start_kiosk_target
+        return \$?
       fi
     fi
 
@@ -1342,6 +1474,10 @@ init_kiosk_after_wayland_ready() {
 
 if [ ! -d "\$XDG_RUNTIME_DIR" ] || [ ! -w "\$XDG_RUNTIME_DIR" ]; then
   echo "kiosk: XDG_RUNTIME_DIR '\$XDG_RUNTIME_DIR' is missing or not writable" >&2
+  exit 1
+fi
+
+if ! load_runtime_display_map; then
   exit 1
 fi
 
@@ -1818,7 +1954,27 @@ PROFILE_DIR="\$APP_DIR/profile"
 URL_FILE="\$APP_DIR/settings/startup_url.txt"
 DEFAULT_URL="file://\$APP_DIR/index.html"
 START_URL="\$DEFAULT_URL"
-OUTPUT_NAME="${output_name}-Maximized"
+DISPLAY_SLOT="${browser_num}"
+DEFAULT_OUTPUT_NAME="${output_name}"
+DISPLAY_MAP_ENV="\$HOME/.config/kiosk/display-map.env"
+
+if [ -f "\$DISPLAY_MAP_ENV" ]; then
+  # shellcheck disable=SC1090
+  . "\$DISPLAY_MAP_ENV"
+fi
+
+resolved_output="\$DEFAULT_OUTPUT_NAME"
+if [ "\$DISPLAY_SLOT" = "1" ] && [ -n "\${KIOSK_DISPLAY_1_OUTPUT:-}" ]; then
+  resolved_output="\$KIOSK_DISPLAY_1_OUTPUT"
+fi
+if [ "\$DISPLAY_SLOT" = "2" ]; then
+  if [ "\${KIOSK_NUM_DISPLAYS:-2}" = "2" ] && [ -n "\${KIOSK_DISPLAY_2_OUTPUT:-}" ]; then
+    resolved_output="\$KIOSK_DISPLAY_2_OUTPUT"
+  elif [ -n "\${KIOSK_DISPLAY_1_OUTPUT:-}" ]; then
+    resolved_output="\$KIOSK_DISPLAY_1_OUTPUT"
+  fi
+fi
+OUTPUT_NAME="\${resolved_output}-Maximized"
 
 if [ -f "\$URL_FILE" ]; then
   raw_url="\$(head -n 1 "\$URL_FILE" | tr -d '\r')"
