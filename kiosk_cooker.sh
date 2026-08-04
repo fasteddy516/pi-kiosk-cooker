@@ -302,6 +302,31 @@ normalize_connector_value() {
   fi
 }
 
+normalize_touch_device_value() {
+  local value="$1"
+
+  case "$value" in
+    "")
+      printf '%s' ""
+      ;;
+    none|NONE|None)
+      printf '%s' "none"
+      ;;
+    by-path:*|by-id:*|name:*)
+      printf '%s' "$value"
+      ;;
+    /dev/input/by-path/*)
+      printf 'by-path:%s' "$(basename "$value")"
+      ;;
+    /dev/input/by-id/*)
+      printf 'by-id:%s' "$(basename "$value")"
+      ;;
+    *)
+      printf '%s' "$value"
+      ;;
+  esac
+}
+
 is_supported_connector() {
   case "$1" in
     HDMI-A-1|HDMI-A-2|DSI-1|DSI-2)
@@ -393,6 +418,234 @@ prompt_display_connector() {
     fi
     printf -v "$target_var" '%s' "$connector"
     return 0
+  done
+}
+
+touch_event_has_abs_axes() {
+  local event_name="$1"
+  local abs_caps
+
+  abs_caps="$(cat "/sys/class/input/${event_name}/device/capabilities/abs" 2>/dev/null || true)"
+  abs_caps="${abs_caps//[[:space:]]/}"
+  abs_caps="${abs_caps//0/}"
+  [ -n "$abs_caps" ]
+}
+
+touch_event_is_candidate() {
+  local event_name="$1"
+  local props
+
+  if command -v udevadm >/dev/null 2>&1; then
+    props="$(udevadm info --query=property --name="/dev/input/${event_name}" 2>/dev/null || true)"
+    if printf '%s\n' "$props" | grep -Eq '^ID_INPUT_TOUCHSCREEN=1$|^ID_INPUT_TABLET=1$'; then
+      return 0
+    fi
+    if printf '%s\n' "$props" | grep -Eq '^ID_INPUT_MOUSE=1$' && touch_event_has_abs_axes "$event_name"; then
+      return 0
+    fi
+  fi
+
+  touch_event_has_abs_axes "$event_name"
+}
+
+touch_stable_id_for_event() {
+  local event_name="$1"
+  local target="/dev/input/${event_name}"
+  local link
+
+  for link in /dev/input/by-path/*; do
+    [ -L "$link" ] || continue
+    if [ "$(readlink -f "$link")" = "$target" ]; then
+      printf 'by-path:%s' "$(basename "$link")"
+      return 0
+    fi
+  done
+
+  for link in /dev/input/by-id/*; do
+    [ -L "$link" ] || continue
+    if [ "$(readlink -f "$link")" = "$target" ]; then
+      printf 'by-id:%s' "$(basename "$link")"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+touch_candidate_ids=()
+touch_candidate_names=()
+
+touch_collect_candidates() {
+  local event_path event_name device_name stable_id
+
+  touch_candidate_ids=()
+  touch_candidate_names=()
+
+  for event_path in /sys/class/input/event*; do
+    [ -e "$event_path" ] || continue
+    event_name="$(basename "$event_path")"
+
+    if ! touch_event_is_candidate "$event_name"; then
+      continue
+    fi
+
+    device_name="$(cat "${event_path}/device/name" 2>/dev/null || true)"
+    [ -n "$device_name" ] || device_name="$event_name"
+    if stable_id="$(touch_stable_id_for_event "$event_name")"; then
+      :
+    else
+      stable_id="name:${device_name}"
+    fi
+
+    touch_candidate_ids+=("$stable_id")
+    touch_candidate_names+=("$device_name")
+  done
+
+  [ "${#touch_candidate_ids[@]}" -gt 0 ]
+}
+
+print_touch_candidates() {
+  local idx
+
+  print_line "Touch-capable input candidates:"
+  for idx in "${!touch_candidate_ids[@]}"; do
+    print_line "  $((idx + 1))) ${touch_candidate_names[$idx]} [${touch_candidate_ids[$idx]}]"
+  done
+}
+
+touch_assignment_needs_prompt() {
+  local needs_display_1=0
+  local needs_display_2=0
+
+  if [ "$display_1_touch_device_explicit" -eq 0 ] && [ -z "$display_1_touch_device" ]; then
+    needs_display_1=1
+  fi
+  if [ "$displays" = "2" ] && [ "$display_2_touch_device_explicit" -eq 0 ] && [ -z "$display_2_touch_device" ]; then
+    needs_display_2=1
+  fi
+
+  [ "$needs_display_1" -eq 1 ] || [ "$needs_display_2" -eq 1 ]
+}
+
+assign_touch_candidate() {
+  local candidate_id="$1"
+  local candidate_name="$2"
+  local answer
+
+  while true; do
+    print_line ""
+    print_line "Assign '${candidate_name}' [${candidate_id}] to:"
+    if [ "$display_1_touch_device_explicit" -eq 0 ]; then
+      print_line "  1) Display 1"
+    fi
+    if [ "$displays" = "2" ] && [ "$display_2_touch_device_explicit" -eq 0 ]; then
+      print_line "  2) Display 2"
+    fi
+    print_line "  n) Do not assign this device"
+    printf 'Select target: '
+    IFS= read -r answer
+
+    case "$answer" in
+      1)
+        if [ "$display_1_touch_device_explicit" -eq 1 ]; then
+          print_line "! Display 1 touch assignment was set explicitly via command line"
+          continue
+        fi
+        if [ "$displays" = "2" ] && [ "$display_2_touch_device" = "$candidate_id" ]; then
+          print_line "! This device is already assigned to Display 2"
+          continue
+        fi
+        display_1_touch_device="$candidate_id"
+        return 0
+        ;;
+      2)
+        if [ "$displays" != "2" ]; then
+          print_line "! Display 2 is not configured"
+          continue
+        fi
+        if [ "$display_2_touch_device_explicit" -eq 1 ]; then
+          print_line "! Display 2 touch assignment was set explicitly via command line"
+          continue
+        fi
+        if [ "$display_1_touch_device" = "$candidate_id" ]; then
+          print_line "! This device is already assigned to Display 1"
+          continue
+        fi
+        display_2_touch_device="$candidate_id"
+        return 0
+        ;;
+      n|N)
+        return 0
+        ;;
+      *)
+        print_line "! Invalid selection '$answer'"
+        ;;
+    esac
+  done
+}
+
+prompt_touch_assignments() {
+  local answer idx
+
+  if ! touch_assignment_needs_prompt; then
+    return 0
+  fi
+
+  if ! touch_collect_candidates; then
+    print_line ""
+    print_line "No touch-capable devices detected, skipping touch assignment."
+    printf 'Press Enter to confirm and continue: '
+    IFS= read -r _
+    return 0
+  fi
+
+  while touch_assignment_needs_prompt; do
+    print_line ""
+    print_touch_candidates
+    print_line ""
+    print_line "Current touch assignments:"
+    print_line "  Display 1: ${display_1_touch_device:-<unassigned>}"
+    if [ "$displays" = "2" ]; then
+      print_line "  Display 2: ${display_2_touch_device:-<unassigned>}"
+    fi
+    print_line ""
+    print_line "Actions:"
+    print_line "  [number] Assign listed device"
+    print_line "  a) Auto-assign by touch"
+    print_line "  x) Disable all remaining touch devices"
+    print_line "  c) Continue"
+    printf 'Select action: '
+    IFS= read -r answer
+
+    case "$answer" in
+      x|X)
+        if [ "$display_1_touch_device_explicit" -eq 0 ] && [ -z "$display_1_touch_device" ]; then
+          display_1_touch_device="none"
+        fi
+        if [ "$displays" = "2" ] && [ "$display_2_touch_device_explicit" -eq 0 ] && [ -z "$display_2_touch_device" ]; then
+          display_2_touch_device="none"
+        fi
+        return 0
+        ;;
+      c|C)
+        return 0
+        ;;
+      a|A)
+        print_line "! Auto-assign by touch is not implemented yet; use numbered assignment for now"
+        ;;
+      *)
+        if [[ "$answer" =~ ^[0-9]+$ ]]; then
+          idx=$((answer - 1))
+          if [ "$idx" -lt 0 ] || [ "$idx" -ge "${#touch_candidate_ids[@]}" ]; then
+            print_line "! Invalid selection '$answer'"
+            continue
+          fi
+          assign_touch_candidate "${touch_candidate_ids[$idx]}" "${touch_candidate_names[$idx]}"
+        else
+          print_line "! Invalid selection '$answer'"
+        fi
+        ;;
+    esac
   done
 }
 
@@ -602,6 +855,8 @@ display_config_file="$display_config_dir/display-map.conf"
 
 display_1_output="$(normalize_connector_value "$display_1_output")"
 display_2_output="$(normalize_connector_value "$display_2_output")"
+display_1_touch_device="$(normalize_touch_device_value "$display_1_touch_device")"
+display_2_touch_device="$(normalize_touch_device_value "$display_2_touch_device")"
 
 if [ -z "$displays" ]; then
   prompt_display_count
@@ -634,6 +889,15 @@ else
   fi
   display_2_output=""
 fi
+
+if [ "$displays" != "2" ]; then
+  if [ -n "$display_2_touch_device" ]; then
+    print_line "${C_YELLOW}! note: ignoring display_2_touch_device because displays=1${C_RESET}"
+  fi
+  display_2_touch_device=""
+fi
+
+prompt_touch_assignments
 
 case "$edid" in
   none|1080P-2CH)
@@ -1006,6 +1270,73 @@ normalize_connector_value() {
   esac
 }
 
+normalize_touch_device_value() {
+  local value="\$1"
+
+  case "\$value" in
+    "")
+      printf '%s' ""
+      ;;
+    none|NONE|None)
+      printf '%s' "none"
+      ;;
+    by-path:*|by-id:*|name:*)
+      printf '%s' "\$value"
+      ;;
+    /dev/input/by-path/*)
+      printf 'by-path:%s' "\$(basename "\$value")"
+      ;;
+    /dev/input/by-id/*)
+      printf 'by-id:%s' "\$(basename "\$value")"
+      ;;
+    *)
+      printf '%s' "\$value"
+      ;;
+  esac
+}
+
+resolve_touch_device_name() {
+  local value="\$1"
+  local link_path=""
+  local event_name=""
+  local name_file=""
+
+  case "\$value" in
+    ""|none|NONE|None)
+      printf '%s' ""
+      return 0
+      ;;
+    by-path:*)
+      link_path="/dev/input/by-path/\${value#by-path:}"
+      ;;
+    by-id:*)
+      link_path="/dev/input/by-id/\${value#by-id:}"
+      ;;
+    name:*)
+      printf '%s' "\${value#name:}"
+      return 0
+      ;;
+    /dev/input/by-path/*|/dev/input/by-id/*)
+      link_path="\$value"
+      ;;
+    *)
+      printf '%s' "\$value"
+      return 0
+      ;;
+  esac
+
+  if [ -e "\$link_path" ] || [ -L "\$link_path" ]; then
+    event_name="\$(basename "\$(readlink -f "\$link_path" 2>/dev/null || printf '%s' "\$link_path")")"
+    name_file="/sys/class/input/\${event_name}/device/name"
+    if [ -f "\$name_file" ]; then
+      cat "\$name_file"
+      return 0
+    fi
+  fi
+
+  printf '%s' ""
+}
+
 is_supported_connector() {
   case "\$1" in
     HDMI-A-1|HDMI-A-2|DSI-1|DSI-2)
@@ -1058,6 +1389,8 @@ fi
 
 display_1_output="\$(normalize_connector_value "\$display_1_output")"
 display_2_output="\$(normalize_connector_value "\$display_2_output")"
+display_1_touch_device="\$(normalize_touch_device_value "\$display_1_touch_device")"
+display_2_touch_device="\$(normalize_touch_device_value "\$display_2_touch_device")"
 
 if [ "\$displays" != "1" ] && [ "\$displays" != "2" ]; then
   displays="\$DEFAULT_DISPLAYS"
@@ -1094,12 +1427,14 @@ ENV
 fi
 
 labwc_touch_entries=""
-if [ -n "\$display_1_touch_device" ]; then
-  display_1_touch_device_xml="\$(xml_escape "\$display_1_touch_device")"
+display_1_touch_device_name="\$(resolve_touch_device_name "\$display_1_touch_device")"
+display_2_touch_device_name="\$(resolve_touch_device_name "\$display_2_touch_device")"
+if [ -n "\$display_1_touch_device_name" ]; then
+  display_1_touch_device_xml="\$(xml_escape "\$display_1_touch_device_name")"
   labwc_touch_entries="  <touch deviceName=\"\$display_1_touch_device_xml\" mapToOutput=\"\$display_1_output\" mouseEmulation=\"yes\" />"
 fi
-if [ "\$displays" = "2" ] && [ -n "\$display_2_touch_device" ]; then
-  display_2_touch_device_xml="\$(xml_escape "\$display_2_touch_device")"
+if [ "\$displays" = "2" ] && [ -n "\$display_2_touch_device_name" ]; then
+  display_2_touch_device_xml="\$(xml_escape "\$display_2_touch_device_name")"
   if [ -n "\$labwc_touch_entries" ]; then
     labwc_touch_entries="\$labwc_touch_entries
   <touch deviceName=\"\$display_2_touch_device_xml\" mapToOutput=\"\$display_2_output\" mouseEmulation=\"yes\" />"
