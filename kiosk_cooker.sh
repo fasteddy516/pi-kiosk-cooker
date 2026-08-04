@@ -474,12 +474,14 @@ touch_stable_id_for_event() {
 
 touch_candidate_ids=()
 touch_candidate_names=()
+touch_candidate_events=()
 
 touch_collect_candidates() {
   local event_path event_name device_name stable_id
 
   touch_candidate_ids=()
   touch_candidate_names=()
+  touch_candidate_events=()
 
   for event_path in /sys/class/input/event*; do
     [ -e "$event_path" ] || continue
@@ -499,6 +501,7 @@ touch_collect_candidates() {
 
     touch_candidate_ids+=("$stable_id")
     touch_candidate_names+=("$device_name")
+    touch_candidate_events+=("$event_name")
   done
 
   [ "${#touch_candidate_ids[@]}" -gt 0 ]
@@ -509,7 +512,7 @@ print_touch_candidates() {
 
   print_line "Touch-capable input candidates:"
   for idx in "${!touch_candidate_ids[@]}"; do
-    print_line "  $((idx + 1))) ${touch_candidate_names[$idx]} [${touch_candidate_ids[$idx]}]"
+    print_line "  $((idx + 1))) ${touch_candidate_names[$idx]} [${touch_candidate_ids[$idx]}] (${touch_candidate_events[$idx]})"
   done
 }
 
@@ -584,6 +587,111 @@ assign_touch_candidate() {
   done
 }
 
+touch_auto_assign_one_display() {
+  local logical_display="$1"
+  local timeout_secs=10
+  local idx candidate_id candidate_name event_name event_path
+  local deadline winner_idx=""
+  local tmp_dir
+  local eligible_indices=()
+  local watcher_pids=()
+
+  for idx in "${!touch_candidate_ids[@]}"; do
+    candidate_id="${touch_candidate_ids[$idx]}"
+    if [ "$candidate_id" = "$display_1_touch_device" ] || [ "$candidate_id" = "$display_2_touch_device" ]; then
+      continue
+    fi
+    event_name="${touch_candidate_events[$idx]}"
+    if [ -z "$event_name" ] || [ ! -r "/dev/input/${event_name}" ]; then
+      continue
+    fi
+    eligible_indices+=("$idx")
+  done
+
+  if [ "${#eligible_indices[@]}" -eq 0 ]; then
+    print_line "! No remaining touch candidates are available for auto-assignment to Display ${logical_display}"
+    return 1
+  fi
+
+  tmp_dir="$(mktemp -d /tmp/kiosk-touch-auto.XXXXXX)" || return 1
+
+  print_line ""
+  print_line "Auto-assign by touch: tap Display ${logical_display} now (timeout: ${timeout_secs}s)"
+
+  for idx in "${eligible_indices[@]}"; do
+    event_name="${touch_candidate_events[$idx]}"
+    event_path="/dev/input/${event_name}"
+    (
+      timeout "$timeout_secs" dd if="$event_path" of="$tmp_dir/${idx}.hit" bs=24 count=1 status=none 2>/dev/null
+    ) &
+    watcher_pids+=("$!")
+  done
+
+  deadline=$((SECONDS + timeout_secs))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    for idx in "${eligible_indices[@]}"; do
+      if [ -s "$tmp_dir/${idx}.hit" ]; then
+        winner_idx="$idx"
+        break 2
+      fi
+    done
+    sleep 0.1
+  done
+
+  for idx in "${!watcher_pids[@]}"; do
+    kill "${watcher_pids[$idx]}" >/dev/null 2>&1 || true
+    wait "${watcher_pids[$idx]}" >/dev/null 2>&1 || true
+  done
+
+  if [ -z "$winner_idx" ]; then
+    rm -rf "$tmp_dir"
+    print_line "! Auto-assign timed out for Display ${logical_display}"
+    return 1
+  fi
+
+  candidate_id="${touch_candidate_ids[$winner_idx]}"
+  candidate_name="${touch_candidate_names[$winner_idx]}"
+  if [ "$logical_display" = "1" ]; then
+    display_1_touch_device="$candidate_id"
+  else
+    display_2_touch_device="$candidate_id"
+  fi
+  rm -rf "$tmp_dir"
+
+  print_line "Assigned '${candidate_name}' [${candidate_id}] to Display ${logical_display} via auto-assign"
+  return 0
+}
+
+touch_auto_assign_by_touch() {
+  local did_any=0
+
+  if ! touch_collect_candidates; then
+    print_line "! No touch-capable devices detected for auto-assign"
+    return 1
+  fi
+
+  if [ "$display_1_touch_device_explicit" -eq 0 ] && [ -z "$display_1_touch_device" ]; then
+    touch_auto_assign_one_display "1" || true
+    if [ -n "$display_1_touch_device" ]; then
+      did_any=1
+    fi
+  fi
+
+  if [ "$displays" = "2" ] && [ "$display_2_touch_device_explicit" -eq 0 ] && [ -z "$display_2_touch_device" ]; then
+    touch_auto_assign_one_display "2" || true
+    if [ -n "$display_2_touch_device" ]; then
+      did_any=1
+    fi
+  fi
+
+  if [ "$did_any" -eq 0 ]; then
+    print_line "! Auto-assign did not resolve any new touch assignments"
+    return 1
+  fi
+
+  return 0
+}
+
 prompt_touch_assignments() {
   local answer idx
 
@@ -631,7 +739,7 @@ prompt_touch_assignments() {
         return 0
         ;;
       a|A)
-        print_line "! Auto-assign by touch is not implemented yet; use numbered assignment for now"
+        touch_auto_assign_by_touch || true
         ;;
       *)
         if [[ "$answer" =~ ^[0-9]+$ ]]; then
