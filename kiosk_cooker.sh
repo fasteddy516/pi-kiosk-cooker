@@ -221,6 +221,74 @@ run_rpi_connect_for_user_allow_nonzero() {
     rpi-connect "$@"
 }
 
+probe_noninteractive_sudo_for_command() {
+  local target_user="$1"
+  local command_path="$2"
+  local listing
+
+  if ! command -v sudo >/dev/null 2>&1; then
+    return 1
+  fi
+
+  listing="$(runuser -u "$target_user" -- sudo -n -l "$command_path" 2>/dev/null || true)"
+  if [ -z "$listing" ]; then
+    return 1
+  fi
+
+  if printf '%s\n' "$listing" | grep -Fq 'NOPASSWD:'; then
+    if printf '%s\n' "$listing" | grep -Eq 'NOPASSWD:[[:space:]]*ALL([[:space:]]|$)' || printf '%s\n' "$listing" | grep -Fq "$command_path"; then
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+ensure_additive_sudoers_fragment_for_command() {
+  local target_user="$1"
+  local command_path="$2"
+  local fragment_path="$3"
+  local tmp_file desired_line
+
+  desired_line="${target_user} ALL=(root) NOPASSWD: ${command_path}"
+  if [ -f "$fragment_path" ] && grep -Fxq "$desired_line" "$fragment_path"; then
+    return 0
+  fi
+
+  tmp_file="$(mktemp /tmp/kiosk-sudoers.XXXXXX)" || return 1
+  {
+    printf '# Managed by kiosk installer\n'
+    [ -f "$fragment_path" ] && cat "$fragment_path"
+    printf '%s\n' "$desired_line"
+  } > "$tmp_file" || {
+    rm -f "$tmp_file"
+    return 1
+  }
+
+  chmod 0440 "$tmp_file" || {
+    rm -f "$tmp_file"
+    return 1
+  }
+
+  if command -v visudo >/dev/null 2>&1; then
+    if ! visudo -cf "$tmp_file" >/dev/null; then
+      rm -f "$tmp_file"
+      return 1
+    fi
+  fi
+
+  cat "$tmp_file" > "$fragment_path" || {
+    rm -f "$tmp_file"
+    return 1
+  }
+  chmod 0440 "$fragment_path" || {
+    rm -f "$tmp_file"
+    return 1
+  }
+  rm -f "$tmp_file"
+  return 0
+}
+
 configure_wireless_overlays() {
   local config_file="/boot/firmware/config.txt"
   local temp_file
@@ -1057,6 +1125,8 @@ fi
 
 display_config_dir="/home/$app_user/.config/kiosk"
 display_config_file="$display_config_dir/display-map.conf"
+touch_apply_helper_path="/usr/local/sbin/kiosk-touch-apply"
+touch_apply_sudoers_fragment="/etc/sudoers.d/kiosk-touch-apply"
 
 display_1_output="$(normalize_connector_value "$display_1_output")"
 display_2_output="$(normalize_connector_value "$display_2_output")"
@@ -1355,6 +1425,17 @@ else
 fi
 
 app_uid=$(id -u "$app_user")
+
+step_begin "Checking non-interactive sudo capability for '$app_user' touch apply helper"
+if probe_noninteractive_sudo_for_command "$app_user" "$touch_apply_helper_path"; then
+  step_ok
+  print_line "    ${C_YELLOW}! note: sudoers permission modifications were not required for user '$app_user'${C_RESET}"
+else
+  step_ok
+  run_step "Updating sudoers permissions for '$app_user' touch apply helper" \
+    ensure_additive_sudoers_fragment_for_command "$app_user" "$touch_apply_helper_path" "$touch_apply_sudoers_fragment"
+  print_line "    ${C_YELLOW}! note: added/verified additive sudoers permission for '$app_user' at '$touch_apply_sudoers_fragment'${C_RESET}"
+fi
 
 # enable seatd for Wayland compositor seat management
 run_step "Enabling seatd service" systemctl enable seatd
