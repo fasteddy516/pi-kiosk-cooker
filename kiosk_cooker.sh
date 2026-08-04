@@ -313,40 +313,28 @@ is_supported_connector() {
   esac
 }
 
-ensure_kmsprint_available() {
-  if ! command -v kmsprint >/dev/null 2>&1; then
-    fail "kmsprint is required for display connector detection but was not found"
-  fi
-}
-
-kmsprint_cache=""
-
-refresh_kmsprint_cache() {
-  if ! kmsprint_cache="$(kmsprint 2>/dev/null)"; then
-    fail "Failed to query display connectors via kmsprint"
-  fi
-}
-
-connector_kmsprint_line() {
+connector_sysfs_is_connected() {
   local connector="$1"
-  printf '%s\n' "$kmsprint_cache" | grep -E "(^|[^A-Z0-9-])${connector}([^A-Z0-9-]|$)" | head -n 1
+  local status_file
+
+  for status_file in /sys/class/drm/*-"$connector"/status; do
+    [ -f "$status_file" ] || continue
+    if grep -Eqi '^(connected|unknown)$' "$status_file"; then
+      return 0
+    fi
+  done
+
+  return 1
 }
 
 connector_exists() {
   local connector="$1"
-  [ -n "$(connector_kmsprint_line "$connector")" ]
+  connector_sysfs_is_connected "$connector"
 }
 
 connector_is_active() {
   local connector="$1"
-  local line
-
-  line="$(connector_kmsprint_line "$connector")"
-  if [ -z "$line" ]; then
-    return 1
-  fi
-
-  echo "$line" | grep -Eqi 'connected|enabled|active'
+  connector_sysfs_is_connected "$connector"
 }
 
 print_connector_options() {
@@ -390,7 +378,6 @@ prompt_display_connector() {
   local answer connector
 
   while true; do
-    refresh_kmsprint_cache
     print_line ""
     print_connector_options "$logical_display"
     printf 'Select output for display %s (1-4): ' "$logical_display"
@@ -613,8 +600,6 @@ fi
 display_config_dir="/home/$app_user/.config/kiosk"
 display_config_file="$display_config_dir/display-map.conf"
 
-ensure_kmsprint_available
-
 display_1_output="$(normalize_connector_value "$display_1_output")"
 display_2_output="$(normalize_connector_value "$display_2_output")"
 
@@ -633,8 +618,6 @@ fi
 if ! is_supported_connector "$display_1_output"; then
   fail "Invalid value for --display-1-output: '$display_1_output' (must be HDMI-A-1, HDMI-A-2, DSI-1, or DSI-2)"
 fi
-
-refresh_kmsprint_cache
 if [ "$displays" = "2" ]; then
   if [ -z "$display_2_output" ]; then
     prompt_display_connector "2" display_2_output
