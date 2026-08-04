@@ -809,7 +809,9 @@ prompt_touch_assignments() {
   local needs_display_2=0
 
   if ! touch_assignment_needs_prompt; then
-    prompt_disable_remaining_touch_devices
+    if [ "$disable_remaining_touch_devices_explicit" -eq 0 ]; then
+      prompt_disable_remaining_touch_devices
+    fi
     return 0
   fi
 
@@ -837,7 +839,9 @@ prompt_touch_assignments() {
     touch_prompt_for_display "2" display_2_touch_device
   fi
 
-  prompt_disable_remaining_touch_devices
+  if [ "$disable_remaining_touch_devices_explicit" -eq 0 ]; then
+    prompt_disable_remaining_touch_devices
+  fi
 }
 
 save_display_config() {
@@ -974,6 +978,7 @@ display_1_output_explicit=0
 display_2_output_explicit=0
 display_1_touch_device_explicit=0
 display_2_touch_device_explicit=0
+disable_remaining_touch_devices_explicit=0
 for arg in "$@"; do
   case $arg in
     --user=*)
@@ -1004,6 +1009,14 @@ for arg in "$@"; do
     --display-2-touch-device=*)
       display_2_touch_device="${arg#*=}"
       display_2_touch_device_explicit=1
+      ;;
+    --disable-remaining-touch-devices)
+      disable_remaining_touch_devices=1
+      disable_remaining_touch_devices_explicit=1
+      ;;
+    --no-disable-remaining-touch-devices)
+      disable_remaining_touch_devices=0
+      disable_remaining_touch_devices_explicit=1
       ;;
     --video=*)
       video+=("${arg#*=}")
