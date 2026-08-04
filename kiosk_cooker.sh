@@ -1127,6 +1127,7 @@ display_config_dir="/home/$app_user/.config/kiosk"
 display_config_file="$display_config_dir/display-map.conf"
 touch_apply_helper_path="/usr/local/sbin/kiosk-touch-apply"
 touch_apply_sudoers_fragment="/etc/sudoers.d/kiosk-touch-apply"
+touch_reconcile_helper_path="/home/$app_user/.local/bin/kiosk-touch-reconcile"
 
 display_1_output="$(normalize_connector_value "$display_1_output")"
 display_2_output="$(normalize_connector_value "$display_2_output")"
@@ -1556,73 +1557,6 @@ normalize_connector_value() {
   esac
 }
 
-normalize_touch_device_value() {
-  local value="\$1"
-
-  case "\$value" in
-    "")
-      printf '%s' ""
-      ;;
-    none|NONE|None)
-      printf '%s' "none"
-      ;;
-    by-path:*|by-id:*|name:*)
-      printf '%s' "\$value"
-      ;;
-    /dev/input/by-path/*)
-      printf 'by-path:%s' "\$(basename "\$value")"
-      ;;
-    /dev/input/by-id/*)
-      printf 'by-id:%s' "\$(basename "\$value")"
-      ;;
-    *)
-      printf '%s' "\$value"
-      ;;
-  esac
-}
-
-resolve_touch_device_name() {
-  local value="\$1"
-  local link_path=""
-  local event_name=""
-  local name_file=""
-
-  case "\$value" in
-    ""|none|NONE|None)
-      printf '%s' ""
-      return 0
-      ;;
-    by-path:*)
-      link_path="/dev/input/by-path/\${value#by-path:}"
-      ;;
-    by-id:*)
-      link_path="/dev/input/by-id/\${value#by-id:}"
-      ;;
-    name:*)
-      printf '%s' "\${value#name:}"
-      return 0
-      ;;
-    /dev/input/by-path/*|/dev/input/by-id/*)
-      link_path="\$value"
-      ;;
-    *)
-      printf '%s' "\$value"
-      return 0
-      ;;
-  esac
-
-  if [ -e "\$link_path" ] || [ -L "\$link_path" ]; then
-    event_name="\$(basename "\$(readlink -f "\$link_path" 2>/dev/null || printf '%s' "\$link_path")")"
-    name_file="/sys/class/input/\${event_name}/device/name"
-    if [ -f "\$name_file" ]; then
-      cat "\$name_file"
-      return 0
-    fi
-  fi
-
-  printf '%s' ""
-}
-
 is_supported_connector() {
   case "\$1" in
     HDMI-A-1|HDMI-A-2|DSI-1|DSI-2)
@@ -1634,20 +1568,9 @@ is_supported_connector() {
   esac
 }
 
-xml_escape() {
-  local value="\$1"
-  value="\${value//&/&amp;}"
-  value="\${value//</&lt;}"
-  value="\${value//>/&gt;}"
-  value="\${value//\"/&quot;}"
-  printf '%s' "\$value"
-}
-
 displays="\$DEFAULT_DISPLAYS"
 display_1_output="\$DEFAULT_DISPLAY_1_OUTPUT"
 display_2_output="\$DEFAULT_DISPLAY_2_OUTPUT"
-display_1_touch_device=""
-display_2_touch_device=""
 
 if [ -f "\$MAP_FILE" ]; then
   while IFS= read -r line || [ -n "\$line" ]; do
@@ -1663,20 +1586,12 @@ if [ -f "\$MAP_FILE" ]; then
       display_2_output=*)
         display_2_output="\${line#*=}"
         ;;
-      display_1_touch_device=*)
-        display_1_touch_device="\${line#*=}"
-        ;;
-      display_2_touch_device=*)
-        display_2_touch_device="\${line#*=}"
-        ;;
     esac
   done < "\$MAP_FILE"
 fi
 
 display_1_output="\$(normalize_connector_value "\$display_1_output")"
 display_2_output="\$(normalize_connector_value "\$display_2_output")"
-display_1_touch_device="\$(normalize_touch_device_value "\$display_1_touch_device")"
-display_2_touch_device="\$(normalize_touch_device_value "\$display_2_touch_device")"
 
 if [ "\$displays" != "1" ] && [ "\$displays" != "2" ]; then
   displays="\$DEFAULT_DISPLAYS"
@@ -1712,23 +1627,6 @@ KIOSK_DISPLAY_2_OUTPUT=\$display_2_output
 ENV
 fi
 
-labwc_touch_entries=""
-display_1_touch_device_name="\$(resolve_touch_device_name "\$display_1_touch_device")"
-display_2_touch_device_name="\$(resolve_touch_device_name "\$display_2_touch_device")"
-if [ -n "\$display_1_touch_device_name" ]; then
-  display_1_touch_device_xml="\$(xml_escape "\$display_1_touch_device_name")"
-  labwc_touch_entries="  <touch deviceName=\"\$display_1_touch_device_xml\" mapToOutput=\"\$display_1_output\" mouseEmulation=\"yes\" />"
-fi
-if [ "\$displays" = "2" ] && [ -n "\$display_2_touch_device_name" ]; then
-  display_2_touch_device_xml="\$(xml_escape "\$display_2_touch_device_name")"
-  if [ -n "\$labwc_touch_entries" ]; then
-    labwc_touch_entries="\$labwc_touch_entries
-  <touch deviceName=\"\$display_2_touch_device_xml\" mapToOutput=\"\$display_2_output\" mouseEmulation=\"yes\" />"
-  else
-    labwc_touch_entries="  <touch deviceName=\"\$display_2_touch_device_xml\" mapToOutput=\"\$display_2_output\" mouseEmulation=\"yes\" />"
-  fi
-fi
-
 labwc_display_2_rules=""
 if [ "\$displays" = "2" ]; then
   labwc_display_2_rules="
@@ -1748,8 +1646,6 @@ fi
 cat > "\$RC_FILE" << XML
 <?xml version="1.0"?>
 <labwc_config>
-
-\${labwc_touch_entries}
 
   <core>
     <!-- Prefer client-side decorations so Chromium negotiates via xdg-decoration. -->
@@ -1807,6 +1703,352 @@ fi
 run_step "Setting runtime sync helper ownership" chown "$app_user:$app_user" "/home/$app_user/.local/bin/kiosk-sync-display-map"
 run_step "Making runtime sync helper executable" chmod +x "/home/$app_user/.local/bin/kiosk-sync-display-map"
 run_step "Rendering labwc rc.xml from display map" runuser -u "$app_user" -- "/home/$app_user/.local/bin/kiosk-sync-display-map"
+
+step_begin "Writing privileged touch apply helper"
+if cat << EOF > "$touch_apply_helper_path"; then
+#!/usr/bin/env bash
+set -euo pipefail
+
+REQUEST_FILE="\${1:-}"
+RESULT_FILE="\${2:-}"
+RULES_FILE="/etc/udev/rules.d/99-kiosk-touch-calibration.rules"
+ALLOWED_UID="$app_uid"
+
+write_result() {
+  local code="\$1"
+  local message="\$2"
+  local tmp
+
+  [ -n "\${RESULT_FILE:-}" ] || return 0
+  tmp="\$(mktemp /tmp/kiosk-touch-result.XXXXXX)" || return 0
+  printf 'CODE=%s\nMESSAGE=%s\n' "\$code" "\$message" > "\$tmp"
+  chmod 0600 "\$tmp" || true
+  mv "\$tmp" "\$RESULT_FILE"
+}
+
+fail_with_result() {
+  local message="\$1"
+  write_result "ERROR" "\$message"
+  echo "kiosk-touch-apply: \$message" >&2
+  exit 1
+}
+
+[ -n "\$REQUEST_FILE" ] || fail_with_result "missing request file argument"
+[ -f "\$REQUEST_FILE" ] || fail_with_result "request file not found: \$REQUEST_FILE"
+
+owner_uid="\$(stat -c '%u' "\$REQUEST_FILE" 2>/dev/null || echo "")"
+[ -n "\$owner_uid" ] || fail_with_result "unable to read request file owner"
+[ "\$owner_uid" = "\$ALLOWED_UID" ] || fail_with_result "request file owner uid '\$owner_uid' is not allowed"
+
+perm_oct="\$(stat -c '%a' "\$REQUEST_FILE" 2>/dev/null || echo "")"
+[ -n "\$perm_oct" ] || fail_with_result "unable to read request file permissions"
+if [ \$((8#\$perm_oct & 8#022)) -ne 0 ]; then
+  fail_with_result "request file must not be group/world writable"
+fi
+
+tmp_rules="\$(mktemp /tmp/kiosk-touch-rules.XXXXXX)" || fail_with_result "unable to create temporary rules file"
+cp "\$REQUEST_FILE" "\$tmp_rules" || {
+  rm -f "\$tmp_rules"
+  fail_with_result "unable to copy request file"
+}
+
+if [ -f "\$RULES_FILE" ] && cmp -s "\$tmp_rules" "\$RULES_FILE"; then
+  rm -f "\$tmp_rules"
+  write_result "UNCHANGED" "touch calibration rules unchanged"
+  exit 0
+fi
+
+install -m 0644 "\$tmp_rules" "\$RULES_FILE" || {
+  rm -f "\$tmp_rules"
+  fail_with_result "unable to install touch calibration rules"
+}
+rm -f "\$tmp_rules"
+
+udevadm control --reload-rules >/dev/null 2>&1 || true
+udevadm trigger --subsystem-match=input --action=change >/dev/null 2>&1 || true
+
+write_result "UPDATED" "touch calibration rules updated"
+exit 0
+EOF
+  step_ok
+else
+  step_error "Unable to write $touch_apply_helper_path"
+fi
+run_step "Setting touch apply helper ownership" chown root:root "$touch_apply_helper_path"
+run_step "Making touch apply helper executable" chmod 0755 "$touch_apply_helper_path"
+
+step_begin "Writing kiosk touch reconcile helper"
+if cat << EOF > "$touch_reconcile_helper_path"; then
+#!/usr/bin/env bash
+set -euo pipefail
+
+MAP_FILE="\$HOME/.config/kiosk/display-map.conf"
+RUNTIME_DIR="\${XDG_RUNTIME_DIR:-/run/user/\$(id -u)}"
+STATE_DIR="\$RUNTIME_DIR/kiosk"
+REQUEST_FILE="\$STATE_DIR/touch-calibration.rules"
+RESULT_FILE="\$STATE_DIR/touch-calibration.result"
+APPLY_HELPER="$touch_apply_helper_path"
+
+DEFAULT_DISPLAYS="$displays"
+DEFAULT_DISPLAY_1_OUTPUT="$display_1_output"
+DEFAULT_DISPLAY_2_OUTPUT="$display_2_output"
+DEFAULT_DISPLAY_1_TOUCH="$display_1_touch_device"
+DEFAULT_DISPLAY_2_TOUCH="$display_2_touch_device"
+
+log_info() { echo "kiosk-touch: INFO \$*"; }
+log_warn() { echo "kiosk-touch: WARN \$*"; }
+
+normalize_connector_value() {
+  case "\$1" in
+    1) printf '%s' "HDMI-A-1" ;;
+    2) printf '%s' "HDMI-A-2" ;;
+    3) printf '%s' "DSI-1" ;;
+    4) printf '%s' "DSI-2" ;;
+    *) printf '%s' "\$1" ;;
+  esac
+}
+
+normalize_touch_device_value() {
+  local value="\$1"
+
+  case "\$value" in
+    "") printf '%s' "" ;;
+    none|NONE|None) printf '%s' "none" ;;
+    by-path:*|by-id:*|name:*) printf '%s' "\$value" ;;
+    /dev/input/by-path/*) printf 'by-path:%s' "\$(basename "\$value")" ;;
+    /dev/input/by-id/*) printf 'by-id:%s' "\$(basename "\$value")" ;;
+    *) printf '%s' "\$value" ;;
+  esac
+}
+
+escape_udev_value() {
+  local value="\$1"
+  printf '%s' "\$value" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+matrix_for_rect() {
+  local x="\$1" y="\$2" w="\$3" h="\$4" min_x="\$5" min_y="\$6" desktop_w="\$7" desktop_h="\$8"
+  awk -v x="\$x" -v y="\$y" -v w="\$w" -v h="\$h" -v minx="\$min_x" -v miny="\$min_y" -v W="\$desktop_w" -v H="\$desktop_h" '
+    BEGIN {
+      if (W <= 0 || H <= 0 || w <= 0 || h <= 0) {
+        exit 1
+      }
+      printf "%.6f 0 %.6f 0 %.6f %.6f", w / W, (x - minx) / W, h / H, (y - miny) / H
+    }
+  '
+}
+
+build_rule_for_device() {
+  local stable_id="\$1"
+  local matrix="\$2"
+  local selector=""
+  local escaped_value=""
+
+  case "\$stable_id" in
+    by-path:*) selector="SYMLINK==\"input/by-path/\${stable_id#by-path:}\"" ;;
+    by-id:*) selector="SYMLINK==\"input/by-id/\${stable_id#by-id:}\"" ;;
+    name:*)
+      escaped_value="\$(escape_udev_value "\${stable_id#name:}")"
+      selector="ATTRS{name}==\"\$escaped_value\""
+      ;;
+    ""|none|NONE|None) return 1 ;;
+    *)
+      escaped_value="\$(escape_udev_value "\$stable_id")"
+      selector="ATTRS{name}==\"\$escaped_value\""
+      ;;
+  esac
+
+  printf 'ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event*", %s, ENV{LIBINPUT_CALIBRATION_MATRIX}="%s"\n' "\$selector" "\$matrix"
+}
+
+displays="\$DEFAULT_DISPLAYS"
+display_1_output="\$DEFAULT_DISPLAY_1_OUTPUT"
+display_2_output="\$DEFAULT_DISPLAY_2_OUTPUT"
+display_1_touch_device="\$DEFAULT_DISPLAY_1_TOUCH"
+display_2_touch_device="\$DEFAULT_DISPLAY_2_TOUCH"
+
+if [ -f "\$MAP_FILE" ]; then
+  while IFS= read -r line || [ -n "\$line" ]; do
+    case "\$line" in
+      ''|\#*) ;;
+      displays=*) displays="\${line#*=}" ;;
+      display_1_output=*) display_1_output="\${line#*=}" ;;
+      display_2_output=*) display_2_output="\${line#*=}" ;;
+      display_1_touch_device=*) display_1_touch_device="\${line#*=}" ;;
+      display_2_touch_device=*) display_2_touch_device="\${line#*=}" ;;
+    esac
+  done < "\$MAP_FILE"
+fi
+
+display_1_output="\$(normalize_connector_value "\$display_1_output")"
+display_2_output="\$(normalize_connector_value "\$display_2_output")"
+display_1_touch_device="\$(normalize_touch_device_value "\$display_1_touch_device")"
+display_2_touch_device="\$(normalize_touch_device_value "\$display_2_touch_device")"
+
+if [ "\$displays" != "1" ] && [ "\$displays" != "2" ]; then
+  displays="\$DEFAULT_DISPLAYS"
+fi
+if [ "\$displays" = "1" ]; then
+  display_2_output=""
+  display_2_touch_device=""
+fi
+
+declare -A output_x output_y output_w output_h
+while IFS='|' read -r out x y w h; do
+  [ -n "\$out" ] || continue
+  output_x["\$out"]="\$x"
+  output_y["\$out"]="\$y"
+  output_w["\$out"]="\$w"
+  output_h["\$out"]="\$h"
+done < <(
+  wlr-randr 2>/dev/null | awk '
+    /^[^[:space:]]/ {
+      if (out != "" && w != "" && h != "" && x != "" && y != "") {
+        print out "|" x "|" y "|" w "|" h
+      }
+      out=\$1; w=""; h=""; x=""; y=""
+      next
+    }
+    /current/ {
+      for (i = 1; i <= NF; i++) {
+        if (\$i ~ /^[0-9]+x[0-9]+$/) {
+          split(\$i, dims, "x")
+          w=dims[1]
+          h=dims[2]
+          break
+        }
+      }
+    }
+    \$1 ~ /^Position:?$/ {
+      coord=\$2
+      if (coord == "" && NF >= 3) {
+        coord=\$3
+      }
+      split(coord, p, ",")
+      x=p[1]
+      y=p[2]
+    }
+    END {
+      if (out != "" && w != "" && h != "" && x != "" && y != "") {
+        print out "|" x "|" y "|" w "|" h
+      }
+    }
+  '
+)
+
+min_x=""
+min_y=""
+max_x=""
+max_y=""
+missing_geometry=0
+
+for output in "\${!output_w[@]}"; do
+  x="\${output_x[\$output]}"
+  y="\${output_y[\$output]}"
+  w="\${output_w[\$output]}"
+  h="\${output_h[\$output]}"
+  end_x=\$((x + w))
+  end_y=\$((y + h))
+
+  if [ -z "\$min_x" ] || [ "\$x" -lt "\$min_x" ]; then min_x="\$x"; fi
+  if [ -z "\$min_y" ] || [ "\$y" -lt "\$min_y" ]; then min_y="\$y"; fi
+  if [ -z "\$max_x" ] || [ "\$end_x" -gt "\$max_x" ]; then max_x="\$end_x"; fi
+  if [ -z "\$max_y" ] || [ "\$end_y" -gt "\$max_y" ]; then max_y="\$end_y"; fi
+done
+
+if [ -z "\$min_x" ] || [ -z "\$min_y" ] || [ -z "\$max_x" ] || [ -z "\$max_y" ]; then
+  log_warn "unable to compute desktop bounds from runtime geometry"
+  exit 0
+fi
+
+desktop_w=\$((max_x - min_x))
+desktop_h=\$((max_y - min_y))
+if [ "\$desktop_w" -le 0 ] || [ "\$desktop_h" -le 0 ]; then
+  log_warn "computed desktop bounds are invalid (W=\$desktop_w H=\$desktop_h)"
+  exit 0
+fi
+
+mkdir -p "\$STATE_DIR"
+tmp_rules="\$(mktemp /tmp/kiosk-touch-calibration.XXXXXX)"
+{
+  printf '# Managed by kiosk touch reconcile\n'
+  printf '# Desktop bounds: min=(%s,%s) size=(%s,%s)\n' "\$min_x" "\$min_y" "\$desktop_w" "\$desktop_h"
+
+  for pair in \
+    "1|\$display_1_output|\$display_1_touch_device" \
+    "2|\$display_2_output|\$display_2_touch_device"; do
+    IFS='|' read -r display_id output stable_id <<< "\$pair"
+    if [ "\$display_id" = "2" ] && [ "\$displays" != "2" ]; then
+      continue
+    fi
+    if [ -z "\$stable_id" ] || [ "\$stable_id" = "none" ]; then
+      continue
+    fi
+    if [ -z "\${output_w[\$output]:-}" ] || [ -z "\${output_h[\$output]:-}" ]; then
+      log_warn "skipping touch mapping for Display \$display_id: output geometry missing"
+      missing_geometry=1
+      continue
+    fi
+
+    matrix="\$(matrix_for_rect "\${output_x[\$output]}" "\${output_y[\$output]}" "\${output_w[\$output]}" "\${output_h[\$output]}" "\$min_x" "\$min_y" "\$desktop_w" "\$desktop_h" 2>/dev/null || true)"
+    if [ -z "\$matrix" ]; then
+      log_warn "skipping touch mapping for Display \$display_id: matrix compute failed"
+      missing_geometry=1
+      continue
+    fi
+
+    rule_line="\$(build_rule_for_device "\$stable_id" "\$matrix" || true)"
+    if [ -z "\$rule_line" ]; then
+      log_warn "skipping touch mapping for Display \$display_id: unsupported stable id '\$stable_id'"
+      missing_geometry=1
+      continue
+    fi
+
+    printf '%s\n' "\$rule_line"
+  done
+} > "\$tmp_rules"
+
+cp "\$tmp_rules" "\$REQUEST_FILE"
+chmod 0600 "\$REQUEST_FILE"
+rm -f "\$tmp_rules"
+
+if ! sudo -n "\$APPLY_HELPER" "\$REQUEST_FILE" "\$RESULT_FILE"; then
+  log_warn "privileged touch apply helper failed; continuing in degraded mode"
+  exit 0
+fi
+
+result_code="\$(awk -F= '/^CODE=/{print \$2}' "\$RESULT_FILE" 2>/dev/null | tail -n1)"
+result_message="\$(awk -F= '/^MESSAGE=/{print \$2}' "\$RESULT_FILE" 2>/dev/null | tail -n1)"
+
+case "\$result_code" in
+  UPDATED)
+    log_info "touch calibration rules updated"
+    ;;
+  UNCHANGED)
+    log_info "touch calibration rules unchanged"
+    ;;
+  *)
+    if [ -n "\$result_message" ]; then
+      log_warn "touch apply result '\$result_code': \$result_message"
+    else
+      log_warn "touch apply result '\$result_code'"
+    fi
+    ;;
+esac
+
+if [ "\$missing_geometry" -eq 1 ]; then
+  log_warn "one or more touch mappings were skipped due to missing geometry"
+fi
+
+exit 0
+EOF
+  step_ok
+else
+  step_error "Unable to write $touch_reconcile_helper_path"
+fi
+run_step "Setting touch reconcile helper ownership" chown "$app_user:$app_user" "$touch_reconcile_helper_path"
+run_step "Making touch reconcile helper executable" chmod +x "$touch_reconcile_helper_path"
+
 # Create a zero-size labwc theme so even if SSD is applied it renders invisibly
 run_step "Setting ownership for labwc config" chown "$app_user:$app_user" "/home/$app_user/.config/labwc/rc.xml"
 run_step "Creating kiosk theme directory" su "$app_user" -c "mkdir -p ~/.local/share/themes/kiosk/openbox-3"
@@ -1872,6 +2114,7 @@ DISPLAY_1_OUTPUT="$DEFAULT_DISPLAY_1_OUTPUT"
 DISPLAY_2_OUTPUT="$DEFAULT_DISPLAY_2_OUTPUT"
 DISPLAY_MAP_SYNC="\$HOME/.local/bin/kiosk-sync-display-map"
 DISPLAY_MAP_ENV="\$XDG_RUNTIME_DIR/kiosk/display-map.env"
+TOUCH_RECONCILE="\$HOME/.local/bin/kiosk-touch-reconcile"
 TARGET_WAYLAND_DISPLAY="wayland-0"
 
 WAIT_SECS=20
@@ -2009,6 +2252,19 @@ effective_output_width() {
   current_output_width "\$output"
 }
 
+run_touch_reconcile() {
+  if [ ! -x "\$TOUCH_RECONCILE" ]; then
+    log "Touch reconcile helper not found: \$TOUCH_RECONCILE"
+    return 0
+  fi
+
+  if ! "\$TOUCH_RECONCILE"; then
+    log "Touch reconcile helper reported degraded mode; continuing startup."
+  fi
+
+  return 0
+}
+
 start_kiosk_target() {
   log "Layout applied successfully."
   export WAYLAND_DISPLAY="\$TARGET_WAYLAND_DISPLAY"
@@ -2064,12 +2320,14 @@ init_kiosk_after_wayland_ready() {
         if [ -z "\$out1_width" ]; then
           log "Could not determine current width for \$out1 after enabling it."
         elif enable_output_at_pos "\$out2" "\${out1_width},0"; then
+          run_touch_reconcile || true
           start_kiosk_target
           return \$?
         fi
       fi
     else
       if enable_output_at_pos "\$out1" "0,0"; then
+        run_touch_reconcile || true
         start_kiosk_target
         return \$?
       fi
