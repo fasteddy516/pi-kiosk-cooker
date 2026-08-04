@@ -475,6 +475,7 @@ touch_stable_id_for_event() {
 touch_candidate_ids=()
 touch_candidate_names=()
 touch_candidate_events=()
+disable_remaining_touch_devices=0
 
 touch_collect_candidates() {
   local event_path event_name device_name stable_id
@@ -528,6 +529,94 @@ touch_assignment_needs_prompt() {
   fi
 
   [ "$needs_display_1" -eq 1 ] || [ "$needs_display_2" -eq 1 ]
+}
+
+touch_assigned_display_label() {
+  local candidate_id="$1"
+
+  if [ -n "$display_1_touch_device" ] && [ "$display_1_touch_device" != "none" ] && [ "$candidate_id" = "$display_1_touch_device" ]; then
+    printf '%s' "Display 1"
+    return 0
+  fi
+  if [ -n "$display_2_touch_device" ] && [ "$display_2_touch_device" != "none" ] && [ "$candidate_id" = "$display_2_touch_device" ]; then
+    printf '%s' "Display 2"
+    return 0
+  fi
+
+  printf '%s' ""
+}
+
+print_touch_options_for_display() {
+  local logical_display="$1"
+  local idx candidate_id assigned_label
+
+  print_line "Select touch device for Display ${logical_display}:"
+  for idx in "${!touch_candidate_ids[@]}"; do
+    candidate_id="${touch_candidate_ids[$idx]}"
+    assigned_label="$(touch_assigned_display_label "$candidate_id")"
+
+    if [ -n "$assigned_label" ] && [ "$assigned_label" != "Display ${logical_display}" ]; then
+      print_line "  $((idx + 1))) (${touch_candidate_names[$idx]} [${touch_candidate_ids[$idx]}]) [assigned as ${assigned_label}]"
+    else
+      print_line "  $((idx + 1))) ${touch_candidate_names[$idx]} [${touch_candidate_ids[$idx]}]"
+    fi
+  done
+  print_line "  a) Auto-assign by touch"
+  print_line "  s) Skip touch assignment for Display ${logical_display}"
+}
+
+touch_prompt_for_display() {
+  local logical_display="$1"
+  local target_var="$2"
+  local answer idx candidate_id assigned_label
+
+  while true; do
+    if ! touch_collect_candidates; then
+      print_line ""
+      print_line "No touch-capable devices detected, skipping touch assignment."
+      printf 'Press Enter to confirm and continue: '
+      IFS= read -r _
+      return 0
+    fi
+
+    print_line ""
+    print_touch_options_for_display "$logical_display"
+    printf 'Select touch for Display %s: ' "$logical_display"
+    IFS= read -r answer
+
+    case "$answer" in
+      a|A)
+        if touch_auto_assign_one_display "$logical_display"; then
+          return 0
+        fi
+        ;;
+      s|S)
+        printf -v "$target_var" '%s' ""
+        return 0
+        ;;
+      *)
+        if [[ "$answer" =~ ^[0-9]+$ ]]; then
+          idx=$((answer - 1))
+          if [ "$idx" -lt 0 ] || [ "$idx" -ge "${#touch_candidate_ids[@]}" ]; then
+            print_line "! Invalid selection '$answer'"
+            continue
+          fi
+
+          candidate_id="${touch_candidate_ids[$idx]}"
+          assigned_label="$(touch_assigned_display_label "$candidate_id")"
+          if [ -n "$assigned_label" ] && [ "$assigned_label" != "Display ${logical_display}" ]; then
+            print_line "! '${touch_candidate_names[$idx]}' is already assigned as ${assigned_label}"
+            continue
+          fi
+
+          printf -v "$target_var" '%s' "$candidate_id"
+          return 0
+        else
+          print_line "! Invalid selection '$answer'"
+        fi
+        ;;
+    esac
+  done
 }
 
 assign_touch_candidate() {
@@ -692,69 +781,63 @@ touch_auto_assign_by_touch() {
   return 0
 }
 
-prompt_touch_assignments() {
-  local answer idx
+prompt_disable_remaining_touch_devices() {
+  local answer
 
-  if ! touch_assignment_needs_prompt; then
-    return 0
-  fi
-
-  if ! touch_collect_candidates; then
-    print_line ""
-    print_line "No touch-capable devices detected, skipping touch assignment."
-    printf 'Press Enter to confirm and continue: '
-    IFS= read -r _
-    return 0
-  fi
-
-  while touch_assignment_needs_prompt; do
-    print_line ""
-    print_touch_candidates
-    print_line ""
-    print_line "Current touch assignments:"
-    print_line "  Display 1: ${display_1_touch_device:-<unassigned>}"
-    if [ "$displays" = "2" ]; then
-      print_line "  Display 2: ${display_2_touch_device:-<unassigned>}"
-    fi
-    print_line ""
-    print_line "Actions:"
-    print_line "  [number] Assign listed device"
-    print_line "  a) Auto-assign by touch"
-    print_line "  x) Disable all remaining touch devices"
-    print_line "  c) Continue"
-    printf 'Select action: '
+  print_line ""
+  while true; do
+    printf 'Disable unassigned touch devices at runtime (including devices added later)? (Y/n): '
     IFS= read -r answer
-
     case "$answer" in
-      x|X)
-        if [ "$display_1_touch_device_explicit" -eq 0 ] && [ -z "$display_1_touch_device" ]; then
-          display_1_touch_device="none"
-        fi
-        if [ "$displays" = "2" ] && [ "$display_2_touch_device_explicit" -eq 0 ] && [ -z "$display_2_touch_device" ]; then
-          display_2_touch_device="none"
-        fi
+      y|Y|"")
+        disable_remaining_touch_devices=1
         return 0
         ;;
-      c|C)
+      n|N)
+        disable_remaining_touch_devices=0
         return 0
-        ;;
-      a|A)
-        touch_auto_assign_by_touch || true
         ;;
       *)
-        if [[ "$answer" =~ ^[0-9]+$ ]]; then
-          idx=$((answer - 1))
-          if [ "$idx" -lt 0 ] || [ "$idx" -ge "${#touch_candidate_ids[@]}" ]; then
-            print_line "! Invalid selection '$answer'"
-            continue
-          fi
-          assign_touch_candidate "${touch_candidate_ids[$idx]}" "${touch_candidate_names[$idx]}"
-        else
-          print_line "! Invalid selection '$answer'"
-        fi
+        print_line "! Invalid selection '$answer'"
         ;;
     esac
   done
+}
+
+prompt_touch_assignments() {
+  local needs_display_1=0
+  local needs_display_2=0
+
+  if ! touch_assignment_needs_prompt; then
+    prompt_disable_remaining_touch_devices
+    return 0
+  fi
+
+  if [ "$display_1_touch_device_explicit" -eq 0 ] && [ -z "$display_1_touch_device" ]; then
+    needs_display_1=1
+  fi
+  if [ "$displays" = "2" ] && [ "$display_2_touch_device_explicit" -eq 0 ] && [ -z "$display_2_touch_device" ]; then
+    needs_display_2=1
+  fi
+
+  if [ "$needs_display_1" -eq 1 ] || [ "$needs_display_2" -eq 1 ]; then
+    if ! touch_collect_candidates; then
+      print_line ""
+      print_line "No touch-capable devices detected, skipping touch assignment."
+      printf 'Press Enter to confirm and continue: '
+      IFS= read -r _
+      return 0
+    fi
+  fi
+
+  if [ "$needs_display_1" -eq 1 ]; then
+    touch_prompt_for_display "1" display_1_touch_device
+  fi
+  if [ "$needs_display_2" -eq 1 ]; then
+    touch_prompt_for_display "2" display_2_touch_device
+  fi
+
+  prompt_disable_remaining_touch_devices
 }
 
 save_display_config() {
@@ -768,6 +851,7 @@ display_1_output=$display_1_output
 display_2_output=$display_2_output
 display_1_touch_device=$display_1_touch_device
 display_2_touch_device=$display_2_touch_device
+disable_remaining_touch_devices=$disable_remaining_touch_devices
 EOF
     step_ok
   else
