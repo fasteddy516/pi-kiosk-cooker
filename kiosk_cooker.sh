@@ -1004,7 +1004,9 @@ if cat << EOF > "/home/$app_user/.local/bin/kiosk-sync-display-map"; then
 set -euo pipefail
 
 MAP_FILE="\$HOME/.config/kiosk/display-map.conf"
-ENV_FILE="\$HOME/.config/kiosk/display-map.env"
+RUNTIME_DIR="\${XDG_RUNTIME_DIR:-/run/user/\$(id -u)}"
+ENV_DIR="\$RUNTIME_DIR/kiosk"
+ENV_FILE="\$ENV_DIR/display-map.env"
 RC_FILE="\$HOME/.config/labwc/rc.xml"
 
 DEFAULT_DISPLAYS="$displays"
@@ -1098,12 +1100,15 @@ else
   display_2_output=""
 fi
 
-mkdir -p "\$(dirname "\$ENV_FILE")" "\$(dirname "\$RC_FILE")"
-cat > "\$ENV_FILE" << ENV
+mkdir -p "\$(dirname "\$RC_FILE")"
+if [ -d "\$RUNTIME_DIR" ] && [ -w "\$RUNTIME_DIR" ]; then
+  mkdir -p "\$ENV_DIR"
+  cat > "\$ENV_FILE" << ENV
 KIOSK_NUM_DISPLAYS=\$displays
 KIOSK_DISPLAY_1_OUTPUT=\$display_1_output
 KIOSK_DISPLAY_2_OUTPUT=\$display_2_output
 ENV
+fi
 
 labwc_touch_entries=""
 if [ -n "\$display_1_touch_device" ]; then
@@ -1162,19 +1167,21 @@ cat > "\$RC_FILE" << XML
     <!-- Belt-and-suspenders: disable SSD for every window regardless of app_id. -->
     <windowRule identifier="*" serverDecoration="no" />
 
+    <!-- Contract: KIOSK-D-n handles routing; do not rename without explicit approval. -->
     <!-- Move kiosk display 1 windows to the configured output -->
-    <windowRule identifier=\"*KIOSK-D-1*\">
+    <windowRule identifier="*KIOSK-D-1*">
       <action name="MoveToOutput" output="\$display_1_output" />
       <skipWindowSwitcher>yes</skipWindowSwitcher>
     </windowRule>
 
     <!-- Move kiosk display 1 windows to the configured output by title -->
-    <windowRule title=\"*KIOSK-D-1*\">
+    <windowRule title="*KIOSK-D-1*">
       <action name="MoveToOutput" output="\$display_1_output" />
       <skipWindowSwitcher>yes</skipWindowSwitcher>
     </windowRule>
 \${labwc_display_2_rules}
 
+    <!-- Contract: maximize is a separate matcher; preserve this two-step behavior. -->
     <!-- Maximize based on app_id -->
     <windowRule identifier="*Maximized*">
       <action name="Maximize" />
@@ -1260,7 +1267,7 @@ NUM_DISPLAYS="$DEFAULT_NUM_DISPLAYS"
 DISPLAY_1_OUTPUT="$DEFAULT_DISPLAY_1_OUTPUT"
 DISPLAY_2_OUTPUT="$DEFAULT_DISPLAY_2_OUTPUT"
 DISPLAY_MAP_SYNC="\$HOME/.local/bin/kiosk-sync-display-map"
-DISPLAY_MAP_ENV="\$HOME/.config/kiosk/display-map.env"
+DISPLAY_MAP_ENV="\$XDG_RUNTIME_DIR/kiosk/display-map.env"
 TARGET_WAYLAND_DISPLAY="wayland-0"
 
 WAIT_SECS=20
@@ -1953,7 +1960,8 @@ PROFILE_DIR="\$APP_DIR/profile"
 URL_FILE="\$APP_DIR/settings/startup_url.txt"
 DEFAULT_URL="file://\$APP_DIR/index.html"
 START_URL="\$DEFAULT_URL"
-OUTPUT_NAME="KIOSK-D-${browser_num}"
+# Contract with labwc rules: keep both KIOSK-D-n and -Maximized tokens unless explicitly approved.
+OUTPUT_NAME="KIOSK-D-${browser_num}-Maximized"
 
 if [ -f "\$URL_FILE" ]; then
   raw_url="\$(head -n 1 "\$URL_FILE" | tr -d '\r')"

@@ -11,6 +11,9 @@ Available at https://github.com/fasteddy516/pi-kiosk-cooker
 ## Description
 This is a script I use for the initial set up of a Raspberry Pi as a single or dual-display kiosk-style device.  Typical use cases are status/dashboard displays, automated media players and touch control interfaces (for [Home Assistant](https://www.home-assistant.io/) in my case).  This script _does not_ fully set up the Pi for these cases, but _does_ take care of the initial set up of a barebones kiosk environment such that running the necessary application(s) should be relatively straight-forward.
 
+> [!IMPORTANT]
+> Change-scope guardrails for Copilot/automation and contributors are defined in [`.github/copilot-instructions.md`](.github/copilot-instructions.md). Out-of-scope refactors, behavior changes, or "optimizations" require explicit user approval before implementation.
+
 > [!WARNING]
 > I use this script for hobby/personal projects in non-critical, controlled environments; there is virtually no thought put into securing/hardening the device or operating system.  In recent versions I have made heavy use of GitHub Copilot to assist with script additions and improvements.  Like the associated MIT license says, "THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND", so use it at your own risk! (But I *do* hope you find it useful, as I do!)
 
@@ -102,9 +105,9 @@ Choose `HDMI-A-1` or `HDMI-A-2` according to the physical display the touchscree
 The script now treats the display mapping as a small two-file workflow:
 
 - `display-map.conf` is the editable source of truth under `/home/<app_user>/.config/kiosk/`. Change this file when you want to update which physical outputs or touch devices belong to each logical display.
-- `display-map.env` is generated from `display-map.conf` at runtime. The kiosk launcher reads this file so it can apply the configured output layout, and it should be treated as derived output rather than something to edit by hand.
+- `display-map.env` is generated from `display-map.conf` at runtime under `/run/user/<uid>/kiosk/display-map.env` (via `XDG_RUNTIME_DIR`). The kiosk launcher reads this file so it can apply the configured output layout, and it should be treated as derived output rather than something to edit by hand.
 
-To apply a mapping change, edit `display-map.conf` and then reboot or restart `kiosk.service` so the runtime helper regenerates `display-map.env` and `~/.config/labwc/rc.xml` from the updated config.
+To apply a mapping change, edit `display-map.conf` and then reboot or restart `kiosk.service` so the runtime helper regenerates `/run/user/<uid>/kiosk/display-map.env` and `~/.config/labwc/rc.xml` from the updated config.
 
 
 ## Under the hood
@@ -188,7 +191,7 @@ The launcher also starts an initialization task alongside `labwc`. That task wai
 
 **`labwc/rc.xml`** is generated with touchscreen output mappings for known controllers, plus three layers of compositor decoration suppression. `<core><decoration>client</decoration>` instructs labwc to prefer client-side decorations (CSD) globally, meaning windows negotiate their own frame via the `xdg-decoration` protocol rather than having the compositor draw a title bar. Chromium, when launched with `WaylandWindowDecorations` in `--enable-features`, requests CSD and suppresses its own title bar when maximized. A `<windowRule identifier="*" serverDecoration="no"/>` rule acts as a belt-and-suspenders fallback in case CSD negotiation fails for any window. Finally, a custom zero-pixel `kiosk` theme (`border.width: 0`, `titlebar.height: 0`) is installed under `~/.local/share/themes/kiosk/openbox-3/themerc` and referenced via `<theme><name>kiosk</name></theme>` — if server-side decorations are ever applied despite the above, they render invisibly.
 
-**`display-map.conf`** is the persistent runtime mapping config that the helper reads on startup. **`display-map.env`** is the helper's generated export file, containing the resolved logical-display values that the session launcher consumes. The browser start scripts use the logical `KIOSK-D-n` identifiers directly and do not need the physical connector mapping. If you need to change display placement or touch assignment, edit `display-map.conf`, then reboot or restart `kiosk.service` so the derived files are refreshed.
+**`display-map.conf`** is the persistent runtime mapping config that the helper reads on startup. **`display-map.env`** is the helper's generated export file in `/run/user/<uid>/kiosk/`, containing the resolved logical-display values that the session launcher consumes. The browser start scripts use the logical `KIOSK-D-n` identifiers directly and do not need the physical connector mapping. If you need to change display placement or touch assignment, edit `display-map.conf`, then reboot or restart `kiosk.service` so the derived files are refreshed.
 
 ### Browser kiosk service (`kioskbrowser-1.service`)
 After the graphical session and display layout are ready, `kioskbrowser-1.service` starts a fullscreen Chromium kiosk instance for display 1 and is configured with `Restart=always` so it automatically respawns if it exits or crashes. This is a user-level systemd service installed at `/home/<app_user>/.config/systemd/user/kioskbrowser-1.service` and enabled under `kiosk.target`.
